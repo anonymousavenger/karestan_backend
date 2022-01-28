@@ -5,6 +5,7 @@ selenium==3.141.0
 flask==2.0.2
 psycopg==3.0.8
 SQLAlchemy==1.4.31
+sqlalchemy2-stubs==0.0.2a19 #MyPy plugin
 psycopg2-binary==2.9.3
 Flask==2.0.2
 Flask-SQLAlchemy==2.5.1

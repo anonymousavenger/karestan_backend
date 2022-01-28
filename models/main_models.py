@@ -1,74 +1,73 @@
-from enum import Enum
+from enum import Enum as EnumClass
 from typing import Union, List
 
-
+from sqlalchemy import String, Integer, Enum, Column, TIMESTAMP, ForeignKey
 from sqlalchemy.dialects.postgresql import JSONB, BOOLEAN, TEXT
 from sqlalchemy.ext.mutable import MutableDict
-from wsgi import FlaskApp
+from sqlalchemy.orm import relationship, Session
 
-db = FlaskApp.psql_db()
-
+from .base_model import BaseMixin, Base
 
 # from sqlalchemy_json import mutable_json_type --> if you ever wanted to modify nested json keys
-class UserType(Enum):
+class UserType(EnumClass):
     admin = 'admin'
     manager = 'manager'
-    employer = 'employer'
+    employee = 'employee'
 
-class FeedbackType(Enum):
+class FeedbackType(EnumClass):
     review = 'review'
     interview = 'interview'
 
 
-class User(db.Model):
-    __tablename__ = 'users'
+class User(Base, BaseMixin):
+    # __tablename__ = 'users'
+    id = Column(Integer, primary_key=True)
+    name = Column(String(80), unique=True, nullable=False)
+    password = Column(String(120), nullable=False)
+    remember_token = Column(String(120), nullable=True)
+    email = Column(String(120), nullable=False, unique=True)
+    is_verified = Column(BOOLEAN, nullable=False, default=False)
+    type = Column(Enum(UserType), default=UserType.employee)
 
-    name = db.Column(db.String(80), unique=True, nullable=False)
-    password = db.Column(db.String(120), nullable=False)
-    remember_token = db.Column(db.String(120), nullable=True)
-    email = db.Column(db.String(120), nullable=False, unique=True)
-    is_verified = db.Column(BOOLEAN, nullable=False, default=True)
-    type = db.Column(db.Enum(UserType), default=UserType.employer)
-
-    company = db.RelationshipProperty("Company", back_populates="user", uselist=False)
-    # feedbacks = db.RelationshipProperty("Feedback", back_populates="user", lazy="dynamic")
+    company = relationship("Company", back_populates="user", uselist=False)
+    feedbacks = relationship("Feedback", back_populates="user")
 
     def __repr__(self):
         return "<User (name= '%s')>" % self.name
     
 
-class Company(db.Model):
-    __tablename__ = 'companies'
+class Company(Base, BaseMixin):
+    # __tablename__ = 'companies'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True, unique=True)
+    en_name = Column(String(80), unique=True, nullable=False)
+    fa_name = Column(String(80), unique=True, nullable=False)
+    email = Column(String(80), nullable=False, unique=True)
+    phone = Column(String(15), nullable=False, unique=True)
+    city = Column(String(15), nullable=False, default='Tehran')
+    score = Column(Integer, nullable=False, default=5)
+    info = Column(MutableDict.as_mutable(JSONB), nullable=True)
 
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, unique=True)
-    en_name = db.Column(db.String(80), unique=True, nullable=False)
-    fa_name = db.Column(db.String(80), unique=True, nullable=False)
-    email = db.Column(db.String(80), nullable=False, unique=True)
-    phone = db.Column(db.String(15), nullable=False, unique=True)
-    city = db.Column(db.String(15), nullable=False, default='Tehran')
-    score = db.Column(db.Integer, nullable=False, default=5)
-    info = db.Column(MutableDict.as_mutable(JSONB), nullable=True)
-
-    user = db.RelationshipProperty(User, back_populates="company")
-    feedbacks = db.RelationshipProperty("Feedback", back_populates="company")
+    user = relationship(User, back_populates="company")
+    feedbacks = relationship("Feedback", back_populates="company")
 
 
-class Feedback(db.Model):
-    __tablename__ = 'feedbacks'
+class Feedback(Base, BaseMixin):
+    # __tablename__ = 'feedbacks'
+    id = Column(Integer, primary_key=True)
+    title = Column(String(80), unique=False, nullable=False)
+    body = Column(TEXT, nullable=False)
+    job_title = Column(String(80), nullable=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    company_id = Column(Integer, ForeignKey('companies.id'), nullable=False)
+    score = Column(Integer, nullable=False, default=5)
+    salary = Column(Integer, nullable=True)
+    type = Column(String(10), nullable=False)
+    details = Column(MutableDict.as_mutable(JSONB), nullable=True)
 
-    title = db.Column(db.String(80), unique=False, nullable=False)
-    body = db.Column(TEXT, nullable=False)
-    job_title = db.Column(db.String(80), nullable=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    company_id = db.Column(db.Integer, db.ForeignKey('companies.id'), nullable=False)
-    score = db.Column(db.Integer, nullable=False, default=5)
-    salary = db.Column(db.Integer, nullable=True)
-    type = db.Column(db.String(10), nullable=False)
-    details = db.Column(MutableDict.as_mutable(JSONB), nullable=True)
-
-    # user = db.RelationshipProperty(User, back_populates="feedbacks", lazy="dynamic")
-    company = db.RelationshipProperty(Company, back_populates="feedbacks")
-    response = db.RelationshipProperty("CompanyResponse", back_populates="feedback", uselist=False)
+    user = relationship(User, back_populates="feedbacks")
+    company = relationship(Company, back_populates="feedbacks")
+    response = relationship("CompanyResponse", back_populates="feedback", uselist=False)
 
     __mapper_args__ = {
         'polymorphic_identity':'feedbacks',
@@ -76,58 +75,58 @@ class Feedback(db.Model):
     }
 
 
-class Review(db.Model):
-    __tablename__ = 'reviews'
+class Review(Feedback):
+    # __tablename__ = 'reviews'
+    
 
-    id = db.Column(db.Integer, db.ForeignKey('feedbacks.id'),  primary_key=True)
-    start_ts = db.Column(db.TIMESTAMP, nullable=True) # job start timestamp
-    end_ts = db.Column(db.TIMESTAMP, nullable=True) # job end timestamp
+    id = Column(Integer, ForeignKey('feedbacks.id'),  primary_key=True)
+    start_ts = Column(TIMESTAMP, nullable=True) # job start timestamp
+    end_ts = Column(TIMESTAMP, nullable=True) # job end timestamp
 
     __mapper_args__ = {
         'polymorphic_identity':'review',
     }
 
-class Interview(db.Model):
-    __tablename__ = 'interviews'
-
-    id = db.Column(db.Integer, db.ForeignKey('feedbacks.id'),  primary_key=True)
-    int_ts = db.Column(db.TIMESTAMP, nullable=False) # interview date timestamp
-    expected_salary = db.Column(db.Integer, nullable=True)
+class Interview(Feedback):
+    # __tablename__ = 'interviews'    
+    id = Column(Integer, ForeignKey('feedbacks.id'),  primary_key=True)
+    int_ts = Column(TIMESTAMP, nullable=False) # interview date timestamp
+    expected_salary = Column(Integer, nullable=True)
 
     __mapper_args__ = {
         'polymorphic_identity':'interview',
     }
 
 
-class CompanyResponse(db.Model):
-    __tablename__ = 'company_responses'
+class CompanyResponse(Base, BaseMixin):
+    # __tablename__ = 'company_responses'
+    id = Column(Integer, primary_key=True)
+    body = Column(TEXT, nullable=False)
+    type = Column(Enum(FeedbackType), nullable=False)
+    timestamp = Column(TIMESTAMP, nullable=False) # response date timestamp
+    feedback_id = Column(Integer, ForeignKey('feedbacks.id'), nullable=False)
+    details = Column(MutableDict.as_mutable(JSONB), nullable=True)
 
-    body = db.Column(TEXT, nullable=False)
-    type = db.Column(db.Enum(FeedbackType), nullable=False)
-    timestamp = db.Column(db.TIMESTAMP, nullable=False) # response date timestamp
-    feedback_id = db.Column(db.Integer, db.ForeignKey('feedbacks.id'), nullable=False)
-    details = db.Column(MutableDict.as_mutable(JSONB), nullable=True)
-
-    feedback = db.RelationshipProperty(Feedback, back_populates="response")
+    feedback = relationship(Feedback, back_populates="response")
 
 
-# class Price(db.Model):
+# class Price(Model):
 #     __tablename__ = 'prices'
 
 #     date: str
 #     has_updated_at = False
 #     dict_ignore = ["id", "created_at", "timestamp"]
 
-#     id = db.Column(db.INTEGER, primary_key=True)
+#     id = Column(INTEGER, primary_key=True)
 #     # Mongo Db Id of the price
-#     meta_info_ref_id = db.Column(db.String, nullable=False)
-#     timestamp = db.Column(db.TIMESTAMP, nullable=False)
-#     open = db.Column(db.Float, nullable=True)
-#     high = db.Column(db.Float, nullable=True)
-#     low = db.Column(db.Float, nullable=True)
-#     close = db.Column(db.Float, nullable=False)
-#     info = db.Column(MutableDict.as_mutable(JSONB), nullable=False)
-#     misc = db.Column(MutableDict.as_mutable(JSONB), nullable=True)
+#     meta_info_ref_id = Column(String, nullable=False)
+#     timestamp = Column(TIMESTAMP, nullable=False)
+#     open = Column(Float, nullable=True)
+#     high = Column(Float, nullable=True)
+#     low = Column(Float, nullable=True)
+#     close = Column(Float, nullable=False)
+#     info = Column(MutableDict.as_mutable(JSONB), nullable=False)
+#     misc = Column(MutableDict.as_mutable(JSONB), nullable=True)
 
 #     def __repr__(self):
 #         return f"<Price (id= {self.id})>"

@@ -1,14 +1,15 @@
 from os.path import dirname
 from flask import Flask, g, current_app
 from typing import Literal, Optional
-from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 from pathlib import Path
 from redis import Redis
 
 from conf import ProductionConfig, TestConfig, DevConfig
 from base_conf import BaseConfig, ProtoConfig, MAIN_ENV
-from .base_model import BaseModel as Base
 from flask_cors import CORS
+from models.main_models import Base
 
 path = dirname(__file__)
 
@@ -16,9 +17,11 @@ path = dirname(__file__)
 class FlaskApp:
     __app: Optional[Flask] = None
     __redis: Optional[Redis] = None
-    __has_celery:bool = True
     env:Literal['production','dev','test'] = MAIN_ENV
     runtime_config: ProtoConfig
+    __psql_engine = None
+    __psql_session: Optional[Session] = None
+    
 
     @classmethod
     def config(cls, **kwargs):
@@ -62,6 +65,7 @@ class FlaskApp:
         CORS(cls.__app)
         cls.__create_dirs()
         cls.__redis = Redis(host=cls.runtime_config.REDIS_HOST, port=cls.runtime_config.REDIS_PORT)
+        cls.__psql_engine = create_engine(cls.runtime_config.SQLALCHEMY_DATABASE_URI)
         return cls.__app
 
     @classmethod
@@ -75,13 +79,6 @@ class FlaskApp:
             raise
         return cls.__redis
 
-    @classmethod
-    def psql_db(cls) -> SQLAlchemy:
-        cls.instance()
-        with cls.__app.app_context(): # type: ignore
-            if 'db' not in g:
-                g.db = SQLAlchemy(current_app, model_class=Base)
-            return g.db
 
     @classmethod
     def register_routes(cls):
@@ -92,12 +89,33 @@ class FlaskApp:
         cls.__app.register_blueprint(api)
         return cls
 
+    @classmethod
+    def db_session(cls):
+        cls.instance()
+        if cls.__psql_session is None:
+            cls.__psql_session = Session(cls.__psql_engine)
+        return cls.__psql_session
+
     # TODO Replace with proper Flask app teardown method
-    @staticmethod
-    def terminate():
-        db: Optional[SQLAlchemy] = g.pop('db', None)
-        if db is not None:
-            db.close_all_sessions() # type: ignore
+    @classmethod
+    def terminate(cls):
+        if cls.__psql_session is not None:
+            cls.__psql_session.close_all()
+
+    @classmethod
+    def create_tables(cls):
+        cls.instance()
+        if cls.__psql_engine is None:
+            raise NotImplementedError
+        Base.metadata.create_all(cls.__psql_engine)
+
+    @classmethod
+    def drop_tables(cls):
+        cls.instance()
+        if cls.__psql_engine is None:
+            raise NotImplementedError
+        Base.metadata.drop_all(cls.__psql_engine)
+
 
 def create_app(testing=False, has_celery=True):
     """This is the gateway function to start server it is only used by gunicorn, flask run or flask shell"""
