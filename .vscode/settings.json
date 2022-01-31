@@ -1,4 +1,6 @@
 {
     "jupyter.jupyterServerType": "local",
-    "git.ignoreLimitWarning": true
+    "git.ignoreLimitWarning": true,
+    "sqltools.connections": [],
+    "todo-tree.tree.showBadges": false
 }

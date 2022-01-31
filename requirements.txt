@@ -11,3 +11,5 @@ Flask==2.0.2
 Flask-SQLAlchemy==2.5.1
 redis==4.1.1
 Flask-Cors==3.0.10
+flask-jwt==0.3.2
+argon2-cffi==21.3.0

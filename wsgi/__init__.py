@@ -1,14 +1,15 @@
 from os.path import dirname
-from flask import Flask, g, current_app
+from flask import Flask
 from typing import Literal, Optional
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from pathlib import Path
 from redis import Redis
+from flask_jwt_extended import JWTManager
+from flask_cors import CORS
 
 from conf import ProductionConfig, TestConfig, DevConfig
 from base_conf import BaseConfig, ProtoConfig, MAIN_ENV
-from flask_cors import CORS
 from models.main_models import Base
 
 path = dirname(__file__)
@@ -21,18 +22,13 @@ class FlaskApp:
     runtime_config: ProtoConfig
     __psql_engine = None
     __psql_session: Optional[Session] = None
+    __jwt: Optional[JWTManager] = None
     
 
     @classmethod
     def config(cls, **kwargs):
         """A convenient method to preconfiguren / override default flask app settings before instantiation"""
-        has_celery = kwargs.get("has_celey")
         env = kwargs.get("env")
-        if has_celery is not None:
-            if isinstance(has_celery, bool):
-                cls.__has_celery = has_celery
-            else:
-                raise TypeError("Error in FlaskApp config: 'has_celery' must be bool")
         if env is not None:
             if env in ['production','dev','test']:
                 cls.env = env
@@ -49,23 +45,15 @@ class FlaskApp:
     def instance(cls):
         if cls.__app:
             return cls.__app
-        config: ProtoConfig
-        if cls.env == 'test':
-            config = TestConfig()
-        elif cls.env == 'dev':
-            config = DevConfig()
-        elif cls.env == 'production':
-            config = ProductionConfig()
-        else:
-            raise ValueError("'env' value must be either ['production','dev','test']")
-        cls.runtime_config = config
 
+        cls.runtime_config = cls.__config__init()
         cls.__app = Flask(cls.runtime_config.APP_NAME, instance_relative_config=True)
         cls.__app.config.from_object(cls.runtime_config)
         CORS(cls.__app)
         cls.__create_dirs()
         cls.__redis = Redis(host=cls.runtime_config.REDIS_HOST, port=cls.runtime_config.REDIS_PORT)
         cls.__psql_engine = create_engine(cls.runtime_config.SQLALCHEMY_DATABASE_URI)
+        cls.__jwt = cls.__jwt_auth_init()
         return cls.__app
 
     @classmethod
@@ -82,11 +70,11 @@ class FlaskApp:
 
     @classmethod
     def register_routes(cls):
+        from api.user import user_blueprint
         cls.instance()
-        from api.main_routes import api
         if cls.__app is None:
             raise NotImplementedError
-        cls.__app.register_blueprint(api)
+        cls.__app.register_blueprint(user_blueprint)
         return cls
 
     @classmethod
@@ -115,9 +103,35 @@ class FlaskApp:
         if cls.__psql_engine is None:
             raise NotImplementedError
         Base.metadata.drop_all(cls.__psql_engine)
+    @classmethod
+    def __jwt_auth_init(cls):
+        if cls.__app is None:
+            raise NotImplementedError
+        return JWTManager(cls.__app)
+
+    @classmethod
+    def __config__init(cls):
+        config: ProtoConfig
+        if cls.env == 'test':
+            config = TestConfig()
+        elif cls.env == 'dev':
+            config = DevConfig()
+        elif cls.env == 'production':
+            config = ProductionConfig()
+        else:
+            raise ValueError("'env' value must be either ['production','dev','test']")
+        return config
+
+    @classmethod
+    def get_jwt(cls) -> JWTManager:
+        cls.instance()
+        if cls.__jwt is None:
+            raise NotImplementedError
+        return cls.__jwt
+        
 
 
-def create_app(testing=False, has_celery=True):
+def create_app(testing=True):
     """This is the gateway function to start server it is only used by gunicorn, flask run or flask shell"""
-    return FlaskApp.config(testing=testing, has_celery=has_celery).register_routes().instance()
+    return FlaskApp.config(testing=testing).register_routes().instance()
     

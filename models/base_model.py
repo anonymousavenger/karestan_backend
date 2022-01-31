@@ -32,7 +32,7 @@ class BaseMixin(object):
 
     @declared_attr
     def __tablename__(cls):
-        return pluralize(cap_to_kebab(cls.__name__))
+        return pluralize(cap_to_kebab(cls.__name__)) # type: ignore # ignored __name__ error
     dict_ignore: list = []
 
     id = Column(Integer, primary_key=True)

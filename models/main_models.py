@@ -1,10 +1,8 @@
 from enum import Enum as EnumClass
-from typing import Union, List
-
 from sqlalchemy import String, Integer, Enum, Column, TIMESTAMP, ForeignKey
 from sqlalchemy.dialects.postgresql import JSONB, BOOLEAN, TEXT
 from sqlalchemy.ext.mutable import MutableDict
-from sqlalchemy.orm import relationship, Session
+from sqlalchemy.orm import relationship
 
 from .base_model import BaseMixin, Base
 
@@ -21,6 +19,8 @@ class FeedbackType(EnumClass):
 
 class User(Base, BaseMixin):
     # __tablename__ = 'users'
+    dict_ignore = ['id','password','created_at','updated_at','remember_token']
+
     id = Column(Integer, primary_key=True)
     name = Column(String(80), unique=True, nullable=False)
     password = Column(String(120), nullable=False)
@@ -38,6 +38,7 @@ class User(Base, BaseMixin):
 
 class Company(Base, BaseMixin):
     # __tablename__ = 'companies'
+
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=True, unique=True)
     en_name = Column(String(80), unique=True, nullable=False)
@@ -54,6 +55,7 @@ class Company(Base, BaseMixin):
 
 class Feedback(Base, BaseMixin):
     # __tablename__ = 'feedbacks'
+
     id = Column(Integer, primary_key=True)
     title = Column(String(80), unique=False, nullable=False)
     body = Column(TEXT, nullable=False)
@@ -78,7 +80,6 @@ class Feedback(Base, BaseMixin):
 class Review(Feedback):
     # __tablename__ = 'reviews'
     
-
     id = Column(Integer, ForeignKey('feedbacks.id'),  primary_key=True)
     start_ts = Column(TIMESTAMP, nullable=True) # job start timestamp
     end_ts = Column(TIMESTAMP, nullable=True) # job end timestamp
@@ -88,7 +89,8 @@ class Review(Feedback):
     }
 
 class Interview(Feedback):
-    # __tablename__ = 'interviews'    
+    # __tablename__ = 'interviews'
+
     id = Column(Integer, ForeignKey('feedbacks.id'),  primary_key=True)
     int_ts = Column(TIMESTAMP, nullable=False) # interview date timestamp
     expected_salary = Column(Integer, nullable=True)
@@ -100,6 +102,7 @@ class Interview(Feedback):
 
 class CompanyResponse(Base, BaseMixin):
     # __tablename__ = 'company_responses'
+
     id = Column(Integer, primary_key=True)
     body = Column(TEXT, nullable=False)
     type = Column(Enum(FeedbackType), nullable=False)

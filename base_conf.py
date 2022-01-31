@@ -1,4 +1,5 @@
 from abc import ABCMeta, abstractmethod
+from datetime import timedelta
 from enum import Enum
 from os.path import dirname
 from threading import main_thread
@@ -7,7 +8,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol, Type
 
 
-MAIN_ENV: Literal['production','dev','test'] = 'dev'
+MAIN_ENV: Literal['production','dev','test'] = 'test'
 
 
 
@@ -36,6 +37,8 @@ class ProtoConfig(Protocol):
     APP_SECRET_KEY: str
     ENV: str
     SQLALCHEMY_DATABASE_URI: str
+    JWT_SECRET_KEY: str
+    JWT_ACCESS_TOKEN_EXPIRES: timedelta
     # MONGO_CLIENT_URI: str
     # MONGO_DB_NAME: str
 
