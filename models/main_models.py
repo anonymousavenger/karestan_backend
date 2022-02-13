@@ -16,12 +16,10 @@ class FeedbackType(BaseEnum):
     review = 'review'
     interview = 'inteprview'
 
-
 class User(Base, BaseMixin):
     # __tablename__ = 'users'
     dict_ignore = ['id','password','created_at','updated_at','remember_token']
 
-    id = Column(Integer, primary_key=True)
     name = Column(String(80), unique=True, nullable=False)
     password = Column(String(120), nullable=False)
     remember_token = Column(String(120), nullable=True)
@@ -34,7 +32,6 @@ class User(Base, BaseMixin):
 
     def __repr__(self):
         return "<User (name= '%s')>" % self.name
-
 
 class Province(Base, BaseMixin):
     col_ignore = ['created_at','updated_at']
@@ -55,17 +52,16 @@ class City(Base, BaseMixin):
     companies = relationship("Company", back_populates="city")
 
 class Company(Base, BaseMixin):
-    # __tablename__ = 'companies'
 
-    # id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=True, unique=True)
     en_name = Column(String(80), unique=True, nullable=False)
     fa_name = Column(String(80), unique=True, nullable=False)
     national_id = Column(String(11), unique=True, nullable=False) 
     email = Column(String(80), nullable=False, unique=True)
+    website = Column(String(80), nullable=False, unique=True)
     phone = Column(String(15), nullable=False, unique=True)
     city_id = Column(Integer, ForeignKey('cities.id'), nullable=False)
-    score = Column(Integer, nullable=False, default=5)
+    score = Column(Integer, nullable=True)
     info = Column(MutableDict.as_mutable(JSONB), nullable=True)
     is_verified = Column(BOOLEAN, nullable=False, default=False)
 
@@ -73,11 +69,8 @@ class Company(Base, BaseMixin):
     feedbacks = relationship("Feedback", back_populates="company")
     city = relationship(City, back_populates="companies")
 
-
 class Feedback(Base, BaseMixin):
-    # __tablename__ = 'feedbacks'
 
-    # id = Column(Integer, primary_key=True)
     title = Column(String(80), unique=False, nullable=False)
     body = Column(TEXT, nullable=False)
     job_title = Column(String(80), nullable=True)
@@ -97,11 +90,10 @@ class Feedback(Base, BaseMixin):
         'polymorphic_on':type
     }
 
-
 class Review(Feedback):
-    # __tablename__ = 'reviews'
+    col_ignore = ['id']
     
-    id = Column(Integer, ForeignKey('feedbacks.id'),  primary_key=True)
+    id = Column(Integer, ForeignKey('feedbacks.id'),  primary_key=True) # type: ignore # declaredattr assign error
     start_ts = Column(TIMESTAMP, nullable=True) # job start timestamp
     end_ts = Column(TIMESTAMP, nullable=True) # job end timestamp
 
@@ -110,9 +102,9 @@ class Review(Feedback):
     }
 
 class Interview(Feedback):
-    # __tablename__ = 'interviews'
+    col_ignore = ['id']
 
-    id = Column(Integer, ForeignKey('feedbacks.id'),  primary_key=True)
+    id = Column(Integer, ForeignKey('feedbacks.id'),  primary_key=True) # type: ignore # declaredattr assign error
     int_ts = Column(TIMESTAMP, nullable=False) # interview date timestamp
     expected_salary = Column(Integer, nullable=True)
 
@@ -120,11 +112,8 @@ class Interview(Feedback):
         'polymorphic_identity':'interview',
     }
 
-
 class CompanyResponse(Base, BaseMixin):
-    # __tablename__ = 'company_responses'
 
-    # id = Column(Integer, primary_key=True)
     body = Column(TEXT, nullable=False)
     type = Column(Enum(FeedbackType), nullable=False)
     timestamp = Column(TIMESTAMP, nullable=False) # response date timestamp
@@ -132,30 +121,3 @@ class CompanyResponse(Base, BaseMixin):
     details = Column(MutableDict.as_mutable(JSONB), nullable=True)
 
     feedback = relationship(Feedback, back_populates="response")
-
-
-# class Price(Model):
-#     __tablename__ = 'prices'
-
-#     date: str
-#     has_updated_at = False
-#     dict_ignore = ["id", "created_at", "timestamp"]
-
-#     id = Column(INTEGER, primary_key=True)
-#     # Mongo Db Id of the price
-#     meta_info_ref_id = Column(String, nullable=False)
-#     timestamp = Column(TIMESTAMP, nullable=False)
-#     open = Column(Float, nullable=True)
-#     high = Column(Float, nullable=True)
-#     low = Column(Float, nullable=True)
-#     close = Column(Float, nullable=False)
-#     info = Column(MutableDict.as_mutable(JSONB), nullable=False)
-#     misc = Column(MutableDict.as_mutable(JSONB), nullable=True)
-
-#     def __repr__(self):
-#         return f"<Price (id= {self.id})>"
-
-#     def to_dict(self):
-#         self.date = self.timestamp.strftime("%d-%m-%y")
-#         return super().to_dict()
-

@@ -93,7 +93,7 @@ class Validators:
 
     @staticmethod
     def en_text(x):
-        regex = re.compile(r"^[A-Za-z\s\d-]+$")
+        regex = re.compile(r"^[A-Za-z\s\d\-.]+$")
         if not regex.match(x):
             return "Text must only contain english letters, digits, space and dash"
         return None
@@ -121,8 +121,8 @@ class BaseParamsValidator:
 
     inputs: dict
 
-    def __init__(self, inputs:dict) -> None:
-        self.inputs = inputs
+    def __init__(self, **kwargs) -> None:
+        self.inputs = kwargs
 
     def get_fields(self) -> Iterable[Tuple[str, ValidatorField]]:
         for key, value in self.__dict__.items():
@@ -200,8 +200,8 @@ class CreateUser(BaseParamsValidator):
     email: ValidatorField
     user_type: ValidatorField
 
-    def __init__(self,inputs) -> None:
-        super().__init__(inputs)
+    def __init__(self,**kwargs) -> None:
+        super().__init__(**kwargs)
         self.user_name = ValidatorField(
             field_type=str,
             optional=False,
@@ -239,8 +239,8 @@ class CreateUser(BaseParamsValidator):
 
 class EditUser(CreateUser):
 
-    def __init__(self, inputs) -> None:
-        super().__init__(inputs=inputs)
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
         self.user_name.optional = True
         self.user_name.eval["unique"] = lambda x: Validators.is_unique(x, User.name, User, get_current_user().id)
         self.password.optional = True
@@ -253,12 +253,13 @@ class CreateCompany(BaseParamsValidator):
     fa_name: ValidatorField
     en_name: ValidatorField
     email: ValidatorField
+    website: ValidatorField
     national_id: ValidatorField
-    score: ValidatorField
     city_id: ValidatorField
+    phone: ValidatorField
 
-    def __init__(self, inputs) -> None:
-        super().__init__(inputs)
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
 
         self.fa_name = ValidatorField(
             field_type =  str,
@@ -287,7 +288,8 @@ class CreateCompany(BaseParamsValidator):
             optional =  False,
             eval =  {
                 "format": lambda x: Validators.email(x),
-                "unique": lambda x: Validators.is_unique(x, Company.email, Company)
+                "unique": lambda x: Validators.is_unique(x, Company.email, Company),
+                "length": lambda x: "Email length can't be more than 60 chars" if len(x) > 60 else None
             }
         )
 
@@ -301,14 +303,14 @@ class CreateCompany(BaseParamsValidator):
             }
         )
 
-        self.score = ValidatorField(
-            field_type =  int,
-            optional =  False,
-            eval =  {
-                "length": lambda x: Validators.digits_length(x, 1),
-                "between": lambda x: "The score must be btween 0 and 10" if x < 0 or x > 10 else None
-            }
-        )
+        # self.score = ValidatorField(
+        #     field_type =  int,
+        #     optional =  False,
+        #     eval =  {
+        #         "length": lambda x: Validators.digits_length(x, 1),
+        #         "between": lambda x: "The score must be btween 0 and 10" if x < 0 or x > 10 else None
+        #     }
+        # )
 
         self.city_id = ValidatorField(
             field_type =  int,
@@ -317,11 +319,31 @@ class CreateCompany(BaseParamsValidator):
                 "has_id": lambda x: Validators.sql_model_id(x, City)
             }
         )
+        self.website = ValidatorField(
+            field_type =  str,
+            optional =  False,
+            eval =  {
+                "format": lambda x: Validators.website(x),
+                "unique": lambda x: Validators.is_unique(x, Company.website, Company),
+                "length": lambda x: "Website length can't be more than 60 chars" if len(x) > 60 else None
+            }
+        )
+
+        self.phone = ValidatorField(
+            field_type =  str,
+            optional =  False,
+            eval =  {
+                "format": lambda x: Validators.int_text(x),
+                "unique": lambda x: Validators.is_unique(x, Company.phone, Company),
+                "length": lambda x: "Phone length can't be more than 15 chars" if len(x) > 15 else None,
+                "no_zero": lambda x: "Phone number must not start with zero" if x[0] == '0' else None
+            }
+        )
 
 class EditCompany(CreateCompany):
     company_id: ValidatorField
-    def __init__(self, inputs) -> None:
-        super().__init__(inputs)
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
         self.company_id = ValidatorField(
             field_type=int,
             optional= False,
@@ -334,7 +356,21 @@ class EditCompany(CreateCompany):
         self.fa_name.optional = True
         self.en_name.optional = True
         self.national_id.optional = True
+        self.website.optional = True
+        self.phone.optional = True
     
     def inputs_check(self):
         if len(self.inputs) < 2 or "company_id" not in self.inputs:
             raise ValidationException(bag={}, message="Payload must contain the field company_id and at least one other field to edit")
+
+class GetCompany(BaseParamsValidator):
+    company_id: ValidatorField
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.company_id = ValidatorField(
+            field_type=int,
+            optional= False,
+            eval={
+                "has_id": lambda x: Validators.sql_model_id(x, Company)
+            }
+        )

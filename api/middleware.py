@@ -1,6 +1,7 @@
 import re
 from urllib import parse
 from flask_jwt_extended.exceptions import UserLookupError, WrongTokenError, NoAuthorizationError
+from flask import request
 
 from controllers.auth import get_current_user
 from models.main_models import UserType
@@ -28,7 +29,7 @@ mapper = {
         }
     }
 
-def get_middleware_func(path:str):
+def __get_middleware_func(path:str):
         mid_dict = mapper
         p_list = re.findall(r"([^\/]+)", path)
         l = len(p_list)
@@ -44,9 +45,10 @@ def get_middleware_func(path:str):
                 return mid_dict["middleware_func"]
 
 
-def get_middleware(url):
-    path = parse.urlparse(url).path
-    return get_middleware_func(path=path)
+def get_middleware():
+    # path = parse.urlparse(url).path
+    path = request.path
+    return __get_middleware_func(path=path)
 
 
 

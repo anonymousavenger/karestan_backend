@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Type
 
 from pytz import timezone
 from sqlalchemy.ext.declarative import declared_attr
@@ -29,7 +30,7 @@ class BaseMixin(object):
     """ Base class for all models
     This is used to define constant columns for all models as well as some ancillary functions
     """
-
+    accepted_serialization_types = [str,dict,list,int,float,bool,datetime, type(None), Type[Enum]]
     dict_ignore: list = []
     col_ignore: list = []
 
@@ -59,7 +60,9 @@ class BaseMixin(object):
         """
         res = {}
         for key, value in self.__dict__.items():
-            if not (key.startswith("__") or key.startswith("_") or key in self.dict_ignore):
+            key_is_valid = not (key.startswith("__") or key.startswith("_") or key in self.dict_ignore)
+            value_is_valid = type(value) in self.accepted_serialization_types
+            if key_is_valid and value_is_valid:
                 # if issubclass(type(value), Enum):
                 #     value = {
                 #         "name": value.name,

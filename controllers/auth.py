@@ -2,10 +2,10 @@
 # DONOT use this module directly in the routes!
 # TODO See if you can trun this module to a middleware
 
-from typing import Optional
-from wsgi import FlaskApp
-from models.main_models import User
 from flask_jwt_extended import jwt_required, current_user, create_access_token
+from typing import Optional
+from models.main_models import User
+from wsgi import FlaskApp
 
 db_session = FlaskApp.db_session()
 jwt = FlaskApp.get_jwt()

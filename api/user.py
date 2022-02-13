@@ -21,7 +21,7 @@ def login():
         response = jsonify({"msg": "Login successful"})
         set_access_cookies(response, token)
         return response
-    except ValueError as e:
+    except ValueError:
         return jsonify({"msg":"User or password is incorrect"}), 400
 
 @user_blueprint.route('/logout', methods=['GET'])
@@ -36,7 +36,7 @@ def add_user():
     params = get_json_params()
 
     try:
-        sanitized = CreateUser(params).validate()
+        sanitized = CreateUser(**params).validate()
     except ValidationException as e:
         return e.to_json_response()
     token = create_user(**sanitized)
@@ -48,7 +48,7 @@ def add_user():
 def edit_user():
     params = get_json_params()
     try:
-        sanitized = EditUser(params).validate()
+        sanitized = EditUser(**params).validate()
     except ValidationException as e:
         return e.to_json_response()
     update_user(**sanitized)
@@ -71,6 +71,8 @@ def delete_user():
 
 def get_json_params() -> dict:
     params = request.json
+    if params is None:
+        return {}
     if type(params) != dict:
         raise TypeError
     else:

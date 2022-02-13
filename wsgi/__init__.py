@@ -12,6 +12,7 @@ from werkzeug.wsgi import get_path_info
 from conf import ProductionConfig, TestConfig, DevConfig
 from base_conf import BaseConfig, ProtoConfig, MAIN_ENV
 from models.main_models import Base
+from util.exceptions import MiddlewareException
 
 path = dirname(__file__)
 
@@ -24,12 +25,6 @@ class FlaskApp(Flask):
     __psql_engine = None
     __psql_session: Optional[Session] = None
     __jwt: Optional[JWTManager] = None
-
-
-    def __call__(self, environ: dict, start_response: Callable) -> Any:
-        print(get_path_info(environ))
-        return super().__call__(environ, start_response)
-    
 
     @classmethod
     def config(cls, **kwargs):
@@ -60,7 +55,19 @@ class FlaskApp(Flask):
         cls.__redis = Redis(host=cls.runtime_config.REDIS_HOST, port=cls.runtime_config.REDIS_PORT)
         cls.__psql_engine = create_engine(cls.runtime_config.SQLALCHEMY_DATABASE_URI)
         cls.__jwt = cls.__jwt_auth_init()
+        cls.__app.before_request(cls.register_middleware)
         return cls.__app
+
+    @staticmethod
+    def register_middleware():
+        from api.middleware import get_middleware
+        middleware_func = get_middleware()
+        if middleware_func is not None:
+            try:
+                middleware_func()
+            except MiddlewareException as e:
+                return e.to_json_response()
+
 
     @classmethod
     def context(cls):
@@ -76,11 +83,14 @@ class FlaskApp(Flask):
 
     @classmethod
     def register_routes(cls):
-        from api.user import user_blueprint
         cls.instance()
         if cls.__app is None:
             raise NotImplementedError
-        cls.__app.register_blueprint(user_blueprint)
+        with cls.__app.app_context():
+            from api.user import user_blueprint
+            from api.admin import admin_blueprint
+            cls.__app.register_blueprint(user_blueprint)
+            cls.__app.register_blueprint(admin_blueprint)
         return cls
 
     @classmethod

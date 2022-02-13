@@ -58,7 +58,7 @@
             "module": "flask",
             "env": {
                 "FLASK_APP": "wsgi",
-                "FLASK_ENV": "test"
+                "FLASK_ENV": "production"
             },
             "args": [
                 "run",

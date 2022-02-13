@@ -4,7 +4,7 @@ from argon2 import PasswordHasher
 from copy import copy
 from sqlalchemy.orm import Query
 
-from .auth import generate_auth_token, get_current_user, db_session
+from .auth import db_session
 from util.db_operations import add_to_db, del_from_db, safe_commit
 
 q = db_session.query(Company)
@@ -18,37 +18,39 @@ def query_companies(**kwargs) -> Query:
 def find_company(company_name) -> Optional[Company]:
     company:Optional[Company] = q.where(Company.fa_name == company_name).first()
 
-def authenticate_user(user_name, password):
-    user = find_company(user_name)
-    if user is not None:
-        return generate_auth_token(identity=user)
-    else:
-        raise ValueError
 
-def create_user(user_name:str, password:str, email:str, type:str = UserType.employee.name):
-    ph = PasswordHasher()
-    user = User(name=user_name, password=ph.hash(password), email=email,type=UserType[type])
-    add_to_db(session=db_session,models=user)
-    return generate_auth_token(identity=user)
+def create_company(fa_name:str, en_name:str, email:str, website:str, national_id:str, phone: str, 
+city_id: int, is_verified:bool = False, info:dict=None):
+    company = Company(fa_name=fa_name, en_name=en_name, email=email,website=website, national_id=national_id, phone=phone,
+    city_id=city_id, is_verified=is_verified, info=info)
+    add_to_db(session=db_session,models=company)
+    return company.to_dict()
 
-def update_user(**kwargs):
-    mapper = {
-        "new_user_name": "name",
-        "new_email": "email",
-        "new_password": "password"
-    }
-    user:User = get_current_user()
+def update_company(company_id:int,**kwargs):
+    company:Optional[Company] = q.get(company_id) 
+    if company is None:
+        return None
     if len(kwargs) < 1:
         raise ValueError("At least one entry is needed to update user. Zero given")
     for key,value in kwargs.items():
-        setattr(user,mapper[key],value)
+        setattr(company,key,value)
+    db_session.merge(company)
     safe_commit(session=db_session)
+    company.id # TEMP This is used to refresh the instance. Need to find a proper way to refresh
+    return company.to_dict()
 
-def del_user():
-    user:User =  get_current_user()
-    del_from_db(session=db_session, model=user)
-    return True
+def del_company(company_id:int):
+    company:Optional[Company] = q.get(company_id)
+    if company is not None:
+        del_from_db(session=db_session, model=company)
+        return True
+    else:
+        return "Company not found"
 
-def get_user_info():
-    user: User = get_current_user()
-    return user.to_dict()
+def get_company_info(company_id:int):
+    company:Optional[Company] = q.get(company_id)
+    if company is not None:
+        return company.to_dict()
+    else:
+        return "Company not found"
+    
