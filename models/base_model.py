@@ -30,16 +30,26 @@ class BaseMixin(object):
     This is used to define constant columns for all models as well as some ancillary functions
     """
 
+    dict_ignore: list = []
+    col_ignore: list = []
+
     @declared_attr
     def __tablename__(cls):
         return pluralize(cap_to_kebab(cls.__name__)) # type: ignore # ignored __name__ error
-    dict_ignore: list = []
 
-    id = Column(Integer, primary_key=True)
 
-    created_at = Column(DateTime, default=datetime.now(tehran))
+    @declared_attr
+    def id(cls):
+        return None if 'id' in cls.col_ignore else Column(Integer, primary_key=True)
 
-    updated_at = Column(DateTime, default=datetime.now(tehran), onupdate=datetime.now(tehran))
+    @declared_attr
+    def created_at(cls):
+        return None if 'created_at' in cls.col_ignore else Column(DateTime, default=datetime.now(tehran))
+
+    
+    @declared_attr
+    def updated_at(cls):
+        return None if 'updated_at' in cls.col_ignore else Column(DateTime, default=datetime.now(tehran), onupdate=datetime.now(tehran))
     
 
     def to_dict(self):
@@ -50,10 +60,10 @@ class BaseMixin(object):
         res = {}
         for key, value in self.__dict__.items():
             if not (key.startswith("__") or key.startswith("_") or key in self.dict_ignore):
-                if issubclass(type(value), Enum):
-                    value = {
-                        "name": value.name,
-                        "value": value.value
-                    }
+                # if issubclass(type(value), Enum):
+                #     value = {
+                #         "name": value.name,
+                #         "value": value.value
+                #     }
                 res[key] = value
         return res

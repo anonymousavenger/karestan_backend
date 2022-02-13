@@ -1,12 +1,13 @@
 from os.path import dirname
 from flask import Flask
-from typing import Literal, Optional
+from typing import Literal, Optional, Callable, Any
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from pathlib import Path
 from redis import Redis
 from flask_jwt_extended import JWTManager
 from flask_cors import CORS
+from werkzeug.wsgi import get_path_info
 
 from conf import ProductionConfig, TestConfig, DevConfig
 from base_conf import BaseConfig, ProtoConfig, MAIN_ENV
@@ -15,7 +16,7 @@ from models.main_models import Base
 path = dirname(__file__)
 
 
-class FlaskApp:
+class FlaskApp(Flask):
     __app: Optional[Flask] = None
     __redis: Optional[Redis] = None
     env:Literal['production','dev','test'] = MAIN_ENV
@@ -23,6 +24,11 @@ class FlaskApp:
     __psql_engine = None
     __psql_session: Optional[Session] = None
     __jwt: Optional[JWTManager] = None
+
+
+    def __call__(self, environ: dict, start_response: Callable) -> Any:
+        print(get_path_info(environ))
+        return super().__call__(environ, start_response)
     
 
     @classmethod
@@ -47,7 +53,7 @@ class FlaskApp:
             return cls.__app
 
         cls.runtime_config = cls.__config__init()
-        cls.__app = Flask(cls.runtime_config.APP_NAME, instance_relative_config=True)
+        cls.__app = cls(cls.runtime_config.APP_NAME, instance_relative_config=True)
         cls.__app.config.from_object(cls.runtime_config)
         CORS(cls.__app)
         cls.__create_dirs()

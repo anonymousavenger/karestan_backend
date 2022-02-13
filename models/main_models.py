@@ -1,20 +1,20 @@
-from enum import Enum as EnumClass
 from sqlalchemy import String, Integer, Enum, Column, TIMESTAMP, ForeignKey
 from sqlalchemy.dialects.postgresql import JSONB, BOOLEAN, TEXT
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import relationship
 
 from .base_model import BaseMixin, Base
+from util import BaseEnum
 
 # from sqlalchemy_json import mutable_json_type --> if you ever wanted to modify nested json keys
-class UserType(EnumClass):
+class UserType(BaseEnum):
     admin = 'admin'
     manager = 'manager'
     employee = 'employee'
 
-class FeedbackType(EnumClass):
+class FeedbackType(BaseEnum):
     review = 'review'
-    interview = 'interview'
+    interview = 'inteprview'
 
 
 class User(Base, BaseMixin):
@@ -34,29 +34,50 @@ class User(Base, BaseMixin):
 
     def __repr__(self):
         return "<User (name= '%s')>" % self.name
-    
+
+
+class Province(Base, BaseMixin):
+    col_ignore = ['created_at','updated_at']
+
+    fa_name = Column(String(80), unique=True, nullable=False)
+    en_name = Column(String(80), unique=True, nullable=True)
+
+    cities = relationship("City", back_populates="province")
+
+class City(Base, BaseMixin):
+    col_ignore = ['created_at','updated_at']
+
+    fa_name = Column(String(80), unique=False, nullable=False)
+    en_name = Column(String(80), unique=False, nullable=True)
+    province_id = Column(Integer, ForeignKey('provinces.id'), nullable=False)
+
+    province = relationship(Province, back_populates="cities")
+    companies = relationship("Company", back_populates="city")
 
 class Company(Base, BaseMixin):
     # __tablename__ = 'companies'
 
-    id = Column(Integer, primary_key=True)
+    # id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=True, unique=True)
     en_name = Column(String(80), unique=True, nullable=False)
     fa_name = Column(String(80), unique=True, nullable=False)
+    national_id = Column(String(11), unique=True, nullable=False) 
     email = Column(String(80), nullable=False, unique=True)
     phone = Column(String(15), nullable=False, unique=True)
-    city = Column(String(15), nullable=False, default='Tehran')
+    city_id = Column(Integer, ForeignKey('cities.id'), nullable=False)
     score = Column(Integer, nullable=False, default=5)
     info = Column(MutableDict.as_mutable(JSONB), nullable=True)
+    is_verified = Column(BOOLEAN, nullable=False, default=False)
 
     user = relationship(User, back_populates="company")
     feedbacks = relationship("Feedback", back_populates="company")
+    city = relationship(City, back_populates="companies")
 
 
 class Feedback(Base, BaseMixin):
     # __tablename__ = 'feedbacks'
 
-    id = Column(Integer, primary_key=True)
+    # id = Column(Integer, primary_key=True)
     title = Column(String(80), unique=False, nullable=False)
     body = Column(TEXT, nullable=False)
     job_title = Column(String(80), nullable=True)
@@ -103,7 +124,7 @@ class Interview(Feedback):
 class CompanyResponse(Base, BaseMixin):
     # __tablename__ = 'company_responses'
 
-    id = Column(Integer, primary_key=True)
+    # id = Column(Integer, primary_key=True)
     body = Column(TEXT, nullable=False)
     type = Column(Enum(FeedbackType), nullable=False)
     timestamp = Column(TIMESTAMP, nullable=False) # response date timestamp
