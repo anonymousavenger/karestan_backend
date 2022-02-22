@@ -1,8 +1,8 @@
-from typing import Optional
-from models.main_models import Company
-from argon2 import PasswordHasher
+from typing import List, Optional, Union
+from models.main_models import Company, Feedback, FeedbackType, Interview, Review
 from copy import copy
-from sqlalchemy.orm import Query
+from sqlalchemy.orm import Query, with_polymorphic
+from sqlalchemy import desc
 
 from .auth import db_session
 from util.db_operations import add_to_db, del_from_db, safe_commit
@@ -15,8 +15,12 @@ def query_companies(**kwargs) -> Query:
         qe = qe.where(getattr(Company,attr) == val)
     return qe
 
-def find_company(company_name) -> Optional[Company]:
-    company:Optional[Company] = q.where(Company.fa_name == company_name).first()
+def get_company(company_id:int) -> Company:
+    company:Optional[Company] = q.get(company_id)
+    if company is not None:
+        return company
+    else:
+        raise ValueError
 
 
 def create_company(fa_name:str, en_name:str, email:str, website:str, national_id:str, phone: str, 
@@ -48,9 +52,33 @@ def del_company(company_id:int):
         return "Company not found"
 
 def get_company_info(company_id:int):
-    company:Optional[Company] = q.get(company_id)
-    if company is not None:
-        return company.to_dict()
+    company:Company = get_company(company_id=company_id)
+    return company.to_dict()
+
+def get_company_feedback_info(company_id:int, feedback_type: Optional[FeedbackType] = None, offset: Optional[int] = None) -> Optional[Union[dict, List[dict]]]:
+    ftype = [feedback_type]
+    if feedback_type is None:
+        subclass = '*'
+        ftype = [FeedbackType.interview, FeedbackType.review]
+    elif feedback_type == FeedbackType.interview:
+        subclass = Interview
+    elif feedback_type == FeedbackType.review:
+        subclass = Review
     else:
-        return "Company not found"
-    
+        raise TypeError
+
+    wpm = with_polymorphic(Feedback, subclass)
+    q = db_session.query(wpm).filter(Feedback.company_id == company_id, Feedback.type.in_(ftype)).order_by(desc(Feedback.created_at))
+
+    if offset is not None:
+        if offset < 1:
+            raise ValueError
+        feedback: Optional[Feedback] = q.filter(wpm.id).offset(offset).first()
+        if feedback is None:
+            return None
+        return feedback.to_dict()
+    else:
+        feedbacks = q.all()
+        if feedbacks is None:
+            return None
+        return [feedback.to_dict() for feedback in feedbacks]

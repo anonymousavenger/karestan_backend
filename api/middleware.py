@@ -1,5 +1,4 @@
 import re
-from urllib import parse
 from flask_jwt_extended.exceptions import UserLookupError, WrongTokenError, NoAuthorizationError
 from flask import request
 
@@ -8,15 +7,15 @@ from models.main_models import UserType
 
 from .user import user_blueprint
 from .admin import admin_blueprint
-from util.exceptions import MiddlewareException
+from util.exceptions import MiddlewareException, NotAuthorized
 
 def admin_check():
     try:
         user = get_current_user()
         if user.type != UserType.admin:
-            raise NoAuthorizationError
+            raise NotAuthorized
     except UserLookupError or WrongTokenError or NoAuthorizationError:
-        raise MiddlewareException
+        raise NotAuthorized
 
 
 mapper = {

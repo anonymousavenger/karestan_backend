@@ -1,5 +1,5 @@
 from os.path import dirname
-from flask import Flask
+from flask import Flask, jsonify
 from typing import Literal, Optional, Callable, Any
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -66,8 +66,7 @@ class FlaskApp(Flask):
             try:
                 middleware_func()
             except MiddlewareException as e:
-                return e.to_json_response()
-
+                return e.to_dict()
 
     @classmethod
     def context(cls):
@@ -89,8 +88,10 @@ class FlaskApp(Flask):
         with cls.__app.app_context():
             from api.user import user_blueprint
             from api.admin import admin_blueprint
+            from api.public import public_blueprint
             cls.__app.register_blueprint(user_blueprint)
             cls.__app.register_blueprint(admin_blueprint)
+            cls.__app.register_blueprint(public_blueprint)
         return cls
 
     @classmethod

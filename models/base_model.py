@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Type
+from typing import List, Optional, Type
 
 from pytz import timezone
 from sqlalchemy.ext.declarative import declared_attr
@@ -53,20 +53,19 @@ class BaseMixin(object):
         return None if 'updated_at' in cls.col_ignore else Column(DateTime, default=datetime.now(tehran), onupdate=datetime.now(tehran))
     
 
-    def to_dict(self):
+    def to_dict(self, ignore_keys:Optional[List[str]]= None, timestamp = True):
         """ Reflects the attributes and values of current instance of model
             This class is used for declaration of base model for sqlalchemy models. It is directly referenced
             when initializing db in wsgi package
         """
         res = {}
+        ignore = self.dict_ignore if ignore_keys is None else ignore_keys
+        
         for key, value in self.__dict__.items():
-            key_is_valid = not (key.startswith("__") or key.startswith("_") or key in self.dict_ignore)
+            key_is_valid = not (key.startswith("__") or key.startswith("_") or key in ignore)
             value_is_valid = type(value) in self.accepted_serialization_types
             if key_is_valid and value_is_valid:
-                # if issubclass(type(value), Enum):
-                #     value = {
-                #         "name": value.name,
-                #         "value": value.value
-                #     }
+                if type(value) == datetime and timestamp:
+                    value = value.timestamp()
                 res[key] = value
         return res

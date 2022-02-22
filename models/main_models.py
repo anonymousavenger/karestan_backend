@@ -1,4 +1,4 @@
-from sqlalchemy import String, Integer, Enum, Column, TIMESTAMP, ForeignKey
+from sqlalchemy import String, Integer, Enum, Column, TIMESTAMP, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, BOOLEAN, TEXT
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import relationship
@@ -14,13 +14,29 @@ class UserType(BaseEnum):
 
 class FeedbackType(BaseEnum):
     review = 'review'
-    interview = 'inteprview'
+    interview = 'interview'
+
+class FeedbackStatus(BaseEnum):
+    waiting = 1
+    show = 2
+    rejected = 3
+    striken = 4
+    user_flagged = 5
+    hidden = 6
+
+class InterviewResult(BaseEnum):
+    accepted = 1 # passed and interviewer accepted the job
+    rejected = 2 # passed but interviewer rejected the job
+    failed = 3 # interviever failed the interview
+    cancelled = 4 # interview was cancelled
+    ghosted = 5 # interview was done but the result wasn't given by the employee
+
 
 class User(Base, BaseMixin):
     # __tablename__ = 'users'
     dict_ignore = ['id','password','created_at','updated_at','remember_token']
 
-    name = Column(String(80), unique=True, nullable=False)
+    name = Column(String(80), nullable=False)
     password = Column(String(120), nullable=False)
     remember_token = Column(String(120), nullable=True)
     email = Column(String(120), nullable=False, unique=True)
@@ -78,7 +94,8 @@ class Feedback(Base, BaseMixin):
     company_id = Column(Integer, ForeignKey('companies.id'), nullable=False)
     score = Column(Integer, nullable=False, default=5)
     salary = Column(Integer, nullable=True)
-    type = Column(String(10), nullable=False)
+    type = Column(Enum(FeedbackType), nullable=False)
+    status = Column(Enum(FeedbackType), nullable=False, default=FeedbackStatus.waiting)
     details = Column(MutableDict.as_mutable(JSONB), nullable=True)
 
     user = relationship(User, back_populates="feedbacks")
@@ -89,6 +106,7 @@ class Feedback(Base, BaseMixin):
         'polymorphic_identity':'feedbacks',
         'polymorphic_on':type
     }
+    __table_args__ = (UniqueConstraint(user_id,company_id,type),)
 
 class Review(Feedback):
     col_ignore = ['id']
@@ -98,7 +116,8 @@ class Review(Feedback):
     end_ts = Column(TIMESTAMP, nullable=True) # job end timestamp
 
     __mapper_args__ = {
-        'polymorphic_identity':'review',
+        'polymorphic_identity':FeedbackType.review,
+        'polymorphic_load': 'inline'
     }
 
 class Interview(Feedback):
@@ -107,9 +126,11 @@ class Interview(Feedback):
     id = Column(Integer, ForeignKey('feedbacks.id'),  primary_key=True) # type: ignore # declaredattr assign error
     int_ts = Column(TIMESTAMP, nullable=False) # interview date timestamp
     expected_salary = Column(Integer, nullable=True)
+    result = Column(Enum(InterviewResult), nullable=False)
 
     __mapper_args__ = {
-        'polymorphic_identity':'interview',
+        'polymorphic_identity':FeedbackType.interview,
+        'polymorphic_load': 'inline'
     }
 
 class CompanyResponse(Base, BaseMixin):
