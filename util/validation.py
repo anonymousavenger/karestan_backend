@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 import re
-from typing import Dict, Iterable, Literal, Optional, Tuple, Type, Callable, Any
+from typing import Dict, Iterable, Literal, Optional, Tuple, Type, Callable, Any, Union
 from sqlalchemy import Column
 
 from .exceptions import ValidationException
@@ -34,7 +34,13 @@ def convert_to_feedback_type(route_name):
     elif route_name == 'reviews':
         return FeedbackType.review
     else:
-        return None
+        raise ValidationException(message="Invalid feedback type provided")
+
+def convert_to_datetime(date:str,format:str):
+    try:
+        return datetime.strptime(date,format)
+    except ValueError as e:
+        raise ValidationException(message=e.args[0]) 
     
 @dataclass
 class ValidatorField():
@@ -50,9 +56,9 @@ class ValidatorField():
         self.check_type_and_subclass()
             
     def check_type_and_subclass(self):
-        accepted_primitives = [str, int, float, bool, dict]
+        accepted_primitives = [str, int, float, bool, dict, datetime]
         accepted_classes = [Enum]
-        if not self.__check_type(self.field_type, accepted_primitives) or not self.__check_subclass(self.field_type, accepted_classes):
+        if not self.__check_type(self.field_type, accepted_primitives) and not self.__check_subclass(self.field_type, accepted_classes):
             raise Exception(f"Field type of {self.field_type} must be one of the following:\
                 {accepted_primitives + accepted_classes}")
         
@@ -167,12 +173,20 @@ class Validators:
         return None
 
     @staticmethod
-    def date_compare(x,format:str ,date:str = "Now", order: Literal['before','after'] = 'before'):
-        x_date = datetime.strptime(x,format)
-        if date != "Now":
-            y_date = datetime.strptime(date,format)
+    def date_compare(x_date:datetime,format:str ,date:Optional[Union[str,datetime]] = None, order: Literal['before','after'] = 'before'):
+        if date is not None:
+            if type(date) == str:
+                try:
+                    y_date:datetime = datetime.strptime(date,format) # type: ignore 
+                except ValueError as e:
+                    return f"Error in date conversion for comparison: {e.args[0]}"
+            elif type(date) == datetime:
+                y_date = date # type: ignore # Complains about str|datetime incompatibility that is illogical because I already put the condition
+            else:
+                raise Exception("Incorrect date form supplied for comparison")
         else:
             y_date = datetime.now()
+            date = "Now"
             
         if order == "before" and x_date > y_date:
             return f"Date must be before {date}"
@@ -213,7 +227,7 @@ class BaseParamsValidator:
 
             if value.converter is not None:
                 try:
-                    converted = value.converter(value=val)
+                    converted = value.converter(val)
                 except:
                     return ["Field conversion error"]
                 if converted is not None:
@@ -315,7 +329,7 @@ class EditUser(CreateUser):
         self.name.optional = True
         self.password.optional = True
         self.email.optional = True
-        self.email.eval["unique"] = lambda x: Validators.is_unique(x, User.email, User, get_current_user().id)
+        self.email.eval["unique"] = lambda x: Validators.is_unique(x, User.email, User, get_current_user().id) # type: ignore
         self.user_type.ignore = True
 
 
@@ -509,6 +523,7 @@ class RegisterFeedback(BaseParamsValidator):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
+
         self.title = ValidatorField(
             field_type=str,
             optional= False,
@@ -541,12 +556,12 @@ class RegisterFeedback(BaseParamsValidator):
             }
         )
         self.salary = ValidatorField(
-            field_type=str,
+            field_type=float,
             optional= False,
             eval={
-                "is_int": lambda x: Validators.int_text(x),
-                "order": lambda x: lambda x: "The salary must be btween 1 and 99 million tomans" if x < 1 or x > 99 else None
-            }            
+                "order": lambda x: "The salary must be btween 1 and 100 million tomans" if x < 1 or x > 100 else None,
+            },
+            converter= lambda x: parse_int_float(round(x,2), float)            
         )
         self.type = ValidatorField(
             field_type=FeedbackType,
@@ -566,11 +581,12 @@ class RegisterFeedback(BaseParamsValidator):
 
         self.details = ValidatorField(
             field_type=dict,
-            optional= False,
+            optional= True, # TODO We later convert this to True
             eval={
                 "keys_in": lambda x: Validators.is_in(x.items().keys(),['some_key'])
             }
         )
+
 
 class RegisterReview(RegisterFeedback):
     start_ts : ValidatorField
@@ -587,22 +603,45 @@ class RegisterReview(RegisterFeedback):
             field_type=datetime,
             optional= False,
             eval={
-                "format": lambda x: Validators.datetime_format(x,date_fmt),
-                "before_now": lambda x: Validators.date_compare(x,format= date_fmt, date="Now", order='before')
+                "before_now": lambda x: Validators.date_compare(x,format= date_fmt, date=None, order='before')
             },
-            converter= lambda x: datetime.strptime(x,date_fmt)
+            converter= lambda x: convert_to_datetime(x, date_fmt)
         )
 
         self.end_ts = ValidatorField(
             field_type=datetime,
             optional= True, # If false is given, thye are still employed
             eval={
-                "format": lambda x: Validators.datetime_format(x,date_fmt),
-                "before_now": lambda x: Validators.date_compare(x,format= date_fmt, date="Now", order='before'),
+                "before_now": lambda x: Validators.date_compare(x,format= date_fmt, date=None, order='before'),
                 "after_start": lambda x: Validators.date_compare(x,format= date_fmt, date=self.inputs['start_ts'], order='after')
             },
-            converter= lambda x: datetime.strptime(x,date_fmt)
+            converter= lambda x: convert_to_datetime(x, date_fmt)
         )
+
+class EditReview(RegisterReview):
+    id: ValidatorField
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+
+        for _, attr in self.get_fields():
+            attr.optional = True
+
+        if "start_ts" not in self.inputs and "end_ts" in self.inputs:
+            del self.end_ts.eval["after_start"]
+
+        self.company_id.ignore = True
+
+        self.id = ValidatorField(
+            field_type=int,
+            optional=False,
+            eval= {
+                "has_id": lambda x: Validators.sql_model_id(x, Review)
+            }
+        )
+    def inputs_check(self):
+        if len(self.inputs) < 2 or "id" not in self.inputs:
+            raise ValidationException(bag={}, message="Payload must contain the field id and at least one other field to edit")    
 
 class RegisterInterview(RegisterFeedback):
     int_ts : ValidatorField
@@ -627,19 +666,40 @@ class RegisterInterview(RegisterFeedback):
             field_type=datetime,
             optional= False,
             eval={
-                "format": lambda x: Validators.datetime_format(x,date_fmt),
-                "before_now": lambda x: Validators.date_compare(x,format= date_fmt, date="Now", order='before')
+                "before_now": lambda x: Validators.date_compare(x,format= date_fmt, date=None, order='before')
             },
-            converter= lambda x: datetime.strptime(x,date_fmt)
+            converter= lambda x: convert_to_datetime(x, date_fmt)
         )
 
         self.expected_salary = self.salary # The expected_salary validator is the same as salary
 
         self.result = ValidatorField(
-            field_type=FeedbackType,
+            field_type=InterviewResult,
             optional= False,
             eval={
                 "in": lambda x: Validators.is_in(x,list(InterviewResult.__members__.values()))
             },
             converter= convert_to_interview_result   
         )
+
+class EditInterView(RegisterInterview):
+    id: ValidatorField
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+
+        for _, attr in self.get_fields():
+            attr.optional = True
+
+        self.company_id.ignore = True
+
+        self.id = ValidatorField(
+            field_type=int,
+            optional=False,
+            eval= {
+                "has_id": lambda x: Validators.sql_model_id(x, Interview)
+            }
+        )
+    def inputs_check(self):
+        if len(self.inputs) < 2 or "id" not in self.inputs:
+            raise ValidationException(bag={}, message="Payload must contain the field id and at least one other field to edit")

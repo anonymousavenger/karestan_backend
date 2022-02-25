@@ -31,11 +31,12 @@ def modify_access_cookies(response, cookie_state: Literal['set','unset'], body:O
     return response
 
 def validate_and_json_response(validator_cls:Optional[Type[BaseParamsValidator]], 
-access_cookie:Optional[Literal['set','unset']] = None):
+access_cookie:Optional[Literal['set','unset']] = None, get_params: bool = True):
     def decorator(func:Callable) -> Callable:
         @wraps(func) # we need 'wraps' to avoid the error: 'View function mapping is overwriting an existing endpoint function...'
         def val_func(**kwargs):
-            kwargs = {**kwargs, **get_json_params()}
+            if get_params:
+                kwargs = {**kwargs, **get_json_params()}
             body = None
             try: 
                 sanitized = validator_cls(**kwargs).validate() if validator_cls is not None else {}

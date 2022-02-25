@@ -25,7 +25,7 @@ class ResponseException(BaseException):
 class ValidationException(ResponseException):
     bag = None
 
-    def __init__(self, bag: dict, message="Please check the 'errors' for the list of validation errors", code=422, error="Validation error"):
+    def __init__(self, bag: dict = {}, message="Please check the 'errors' for the list of validation errors", code=422, error="Validation error"):
         # Call the base class constructor with the parameters it needs
         self.message = message
         self.error = error
@@ -43,7 +43,7 @@ class ValidationException(ResponseException):
 
 
 class MiddlewareException(ResponseException):
-    def __init__(self, code=404, message="", error="Middleware error") -> None:
+    def __init__(self, code=400, message="", error="Middleware error") -> None:
         super().__init__(code, message, error)
 
 class NotAuthorized(MiddlewareException):

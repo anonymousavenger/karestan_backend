@@ -1,4 +1,4 @@
-from sqlalchemy import String, Integer, Enum, Column, TIMESTAMP, ForeignKey, UniqueConstraint
+from sqlalchemy import String, Integer, Enum, Column, TIMESTAMP, ForeignKey, Index, Float
 from sqlalchemy.dialects.postgresql import JSONB, BOOLEAN, TEXT
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import relationship
@@ -93,9 +93,9 @@ class Feedback(Base, BaseMixin):
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     company_id = Column(Integer, ForeignKey('companies.id'), nullable=False)
     score = Column(Integer, nullable=False, default=5)
-    salary = Column(Integer, nullable=True)
+    salary = Column(Float, nullable=True) # Salary is in million toman
     type = Column(Enum(FeedbackType), nullable=False)
-    status = Column(Enum(FeedbackType), nullable=False, default=FeedbackStatus.waiting)
+    status = Column(Enum(FeedbackStatus), nullable=False, default=FeedbackStatus.waiting)
     details = Column(MutableDict.as_mutable(JSONB), nullable=True)
 
     user = relationship(User, back_populates="feedbacks")
@@ -106,7 +106,9 @@ class Feedback(Base, BaseMixin):
         'polymorphic_identity':'feedbacks',
         'polymorphic_on':type
     }
-    __table_args__ = (UniqueConstraint(user_id,company_id,type),)
+    # We only index uniqueness for the feedbacks that have the satatus of 'show' or 'waiting'
+    __table_args__ = (Index("unique_shown_feedback",user_id, company_id, type, status, 
+    unique=True, postgresql_where=(status.in_([FeedbackStatus.show, FeedbackStatus.waiting]))),)
 
 class Review(Feedback):
     col_ignore = ['id']
@@ -125,7 +127,7 @@ class Interview(Feedback):
 
     id = Column(Integer, ForeignKey('feedbacks.id'),  primary_key=True) # type: ignore # declaredattr assign error
     int_ts = Column(TIMESTAMP, nullable=False) # interview date timestamp
-    expected_salary = Column(Integer, nullable=True)
+    expected_salary = Column(Float, nullable=True)
     result = Column(Enum(InterviewResult), nullable=False)
 
     __mapper_args__ = {

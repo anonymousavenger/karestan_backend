@@ -66,7 +66,10 @@ class FlaskApp(Flask):
             try:
                 middleware_func()
             except MiddlewareException as e:
-                return e.to_dict()
+                return jsonify({
+                    "msg": e.message,
+                    "body": e.to_dict()
+                }), 400
 
     @classmethod
     def context(cls):
@@ -89,9 +92,9 @@ class FlaskApp(Flask):
             from api.user import user_blueprint
             from api.admin import admin_blueprint
             from api.public import public_blueprint
-            cls.__app.register_blueprint(user_blueprint)
-            cls.__app.register_blueprint(admin_blueprint)
-            cls.__app.register_blueprint(public_blueprint)
+            from api.feedback import feedback_blueprint
+            for blueprint in [user_blueprint, admin_blueprint, public_blueprint, feedback_blueprint]:
+                cls.__app.register_blueprint(blueprint)
         return cls
 
     @classmethod

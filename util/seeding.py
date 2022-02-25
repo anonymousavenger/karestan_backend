@@ -7,7 +7,7 @@ from factory import Factory, Sequence, LazyAttribute
 from faker import Faker
 
 from .db_operations import add_to_db
-from models.main_models import FeedbackType, Interview, InterviewResult, User, Company, Review, UserType, Province, City
+from models.main_models import FeedbackStatus, FeedbackType, Interview, InterviewResult, User, Company, Review, UserType, Province, City
 
 session = FlaskApp.db_session()
 ph = PasswordHasher()
@@ -72,8 +72,9 @@ class ReviewFactory(Factory):
     body = LazyAttribute(lambda _: random_item(bodies))
     job_title = LazyAttribute(lambda _: random_item(jobs))
     score = LazyAttribute(lambda _: randint(1,10))
-    salary = LazyAttribute(lambda _: str(randrange(1000000,12000000,1000000)))
+    salary = LazyAttribute(lambda _: round(randint(1000000,9900000)/1000000,2))
     start_ts = LazyAttribute(lambda _: datetime.now() - timedelta(days=randint(0,1000)))
+    status = LazyAttribute(lambda _: random_item(list(FeedbackStatus.__members__.values())))
     end_ts = LazyAttribute(lambda o: o.start_ts + timedelta(days=randint(0,1000)))
     user_id = None
     company_id = None
@@ -88,9 +89,10 @@ class InterviewFactory(Factory):
     body = LazyAttribute(lambda _: random_item(bodies))
     job_title = LazyAttribute(lambda _: random_item(jobs))
     score = LazyAttribute(lambda _: randint(1,10))
-    salary = LazyAttribute(lambda _: str(randrange(1000000,12000000,1000000)))
-    expected_salary = LazyAttribute(lambda _: str(randrange(1000000,12000000,1000000)))
+    salary = LazyAttribute(lambda _: round(randint(1000000,9900000)/1000000,2))
+    expected_salary = LazyAttribute(lambda _: round(randint(1000000,9900000)/1000000,2))
     int_ts = LazyAttribute(lambda _: datetime.now() - timedelta(days=randint(0,1000)))
+    status = LazyAttribute(lambda _: random_item(list(FeedbackStatus.__members__.values())))
     result = LazyAttribute(lambda _: random_item(list(InterviewResult.__members__.values())))
     user_id = None
     company_id = None
@@ -114,7 +116,6 @@ def create_cities():
 
 
 def assign_feedback(type:FeedbackType,user_id:int):
-    user_company_reviews
     company_id = randint(1, number)
     j = 1
     while user_id in user_company_reviews[company_id][type]:
@@ -122,15 +123,17 @@ def assign_feedback(type:FeedbackType,user_id:int):
         if j > number:
             raise
         company_id = randint(2, number+3)
-    user_company_reviews[company_id][type].append(user_id)
     if type == FeedbackType.interview:
-        return InterviewFactory(company_id=company_id, user_id=user_id)
+        model = InterviewFactory(company_id=company_id, user_id=user_id)
     else:
-        return ReviewFactory(company_id=company_id, user_id=user_id)        
+        model = ReviewFactory(company_id=company_id, user_id=user_id)
+    # We only index uniqueness for the feedbacks that have the satatus of 'show' or 'waiting'
+    if model.status in  [FeedbackStatus.show, FeedbackStatus.waiting]: 
+        user_company_reviews[company_id][type].append(user_id)
+    return model     
     
     
 def run():
-    user_company_reviews
     create_provinces()
     create_cities()
     employee =  User(name="jobguy",password=ph.hash("12345678"),type=UserType.employee,email="me@jobguy.com")
@@ -147,7 +150,7 @@ def run():
 
     feedback_models = []
     for i in range(2, number + 3):
-        for j in range(4):
+        for j in range(400):
             feedback_type = random_item(list(FeedbackType.__members__.values()))
             try:
                 feedback_models.append(assign_feedback(feedback_type,i+1))

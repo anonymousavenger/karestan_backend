@@ -9,7 +9,7 @@ from sqlalchemy.orm.decl_api import DeclarativeMeta
 from sqlalchemy.orm import registry
 from datetime import datetime
 
-from util import cap_to_kebab, pluralize
+from util import BaseEnum, cap_to_kebab, pluralize
 
 tehran = timezone("Asia/Tehran")
 
@@ -30,7 +30,8 @@ class BaseMixin(object):
     """ Base class for all models
     This is used to define constant columns for all models as well as some ancillary functions
     """
-    accepted_serialization_types = [str,dict,list,int,float,bool,datetime, type(None), Type[Enum]]
+    accepted_serialization_types = [str,dict,list,int,float,bool,datetime, type(None)]
+    accepted_serialization_classes = [Enum]
     dict_ignore: list = []
     col_ignore: list = []
 
@@ -52,6 +53,12 @@ class BaseMixin(object):
     def updated_at(cls):
         return None if 'updated_at' in cls.col_ignore else Column(DateTime, default=datetime.now(tehran), onupdate=datetime.now(tehran))
     
+    @staticmethod
+    def is_subclass(value, accepted_classes:list):
+        for a_class in accepted_classes:
+            if issubclass(type(value), a_class):
+                return True
+        return False
 
     def to_dict(self, ignore_keys:Optional[List[str]]= None, timestamp = True):
         """ Reflects the attributes and values of current instance of model
@@ -63,9 +70,11 @@ class BaseMixin(object):
         
         for key, value in self.__dict__.items():
             key_is_valid = not (key.startswith("__") or key.startswith("_") or key in ignore)
-            value_is_valid = type(value) in self.accepted_serialization_types
+            value_is_valid = type(value) in self.accepted_serialization_types or self.is_subclass(value, self.accepted_serialization_classes)
             if key_is_valid and value_is_valid:
                 if type(value) == datetime and timestamp:
                     value = value.timestamp()
+                if issubclass(type(value), BaseEnum):
+                    value = str(value)
                 res[key] = value
         return res

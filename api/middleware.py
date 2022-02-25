@@ -4,10 +4,10 @@ from flask import request
 
 from controllers.auth import get_current_user
 from models.main_models import UserType
-
 from .user import user_blueprint
 from .admin import admin_blueprint
-from util.exceptions import MiddlewareException, NotAuthorized
+from .feedback import feedback_blueprint
+from util.exceptions import NotAuthorized
 
 def admin_check():
     try:
@@ -17,6 +17,13 @@ def admin_check():
     except UserLookupError or WrongTokenError or NoAuthorizationError:
         raise NotAuthorized
 
+def employee_check():
+    try:
+        user = get_current_user()
+        if user.type != UserType.employee:
+            raise NotAuthorized
+    except UserLookupError or WrongTokenError or NoAuthorizationError:
+        raise NotAuthorized
 
 mapper = {
         user_blueprint.url_prefix[1:]: {
@@ -25,6 +32,9 @@ mapper = {
         admin_blueprint.url_prefix[1:]: {
             "middleware_func": admin_check,
             "login": None
+        },
+        feedback_blueprint.url_prefix[1:]: {
+            "middleware_func": employee_check,
         }
     }
 
