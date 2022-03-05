@@ -1,8 +1,9 @@
 /raw_data
 /resources
 /conf.py
+/snippets
 /.mypy_cache
-/test.*
+/test*.*
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

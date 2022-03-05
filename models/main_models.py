@@ -72,6 +72,7 @@ class Company(Base, BaseMixin):
     user_id = Column(Integer, ForeignKey('users.id'), nullable=True, unique=True)
     en_name = Column(String(80), unique=True, nullable=False)
     fa_name = Column(String(80), unique=True, nullable=False)
+    brand_name = Column(String(10), unique=True, nullable=True)
     national_id = Column(String(11), unique=True, nullable=False) 
     email = Column(String(80), nullable=False, unique=True)
     website = Column(String(80), nullable=False, unique=True)

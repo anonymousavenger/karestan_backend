@@ -5,11 +5,13 @@ import re
 from typing import Dict, Iterable, Literal, Optional, Tuple, Type, Callable, Any, Union
 from sqlalchemy import Column
 
-from .exceptions import ValidationException
+from .exceptions import InternalException, ValidationException
 from models.base_model import Base
 from models.main_models import City, Company, FeedbackType, Interview, InterviewResult, Review, User, UserType
 from wsgi import FlaskApp
 from controllers.auth import get_current_user
+
+
 
 db_session = FlaskApp.db_session()
 
@@ -17,15 +19,15 @@ db_session = FlaskApp.db_session()
                 # is numeric and if true, we can cast it to the required type
 def parse_int_float(strx, type_class):
     if type(strx) != str:
-        return None
+        return strx
     if type_class == int:
         match = re.compile(r"^\d+$").match(strx)
     elif type_class == float:
         match = re.compile(r"^\d+\.\d+$").match(strx)
     else:
-        return None
+        raise InternalException(error=f"{__name__} conversion function, invalid type supplied")
     if match is None:
-        return None
+        raise InternalException(error=f"Cannot convert {strx} to type {type_class}")
     return type_class(strx)
 
 def convert_to_feedback_type(route_name):
@@ -34,25 +36,55 @@ def convert_to_feedback_type(route_name):
     elif route_name == 'reviews':
         return FeedbackType.review
     else:
-        raise ValidationException(message="Invalid feedback type provided")
+        raise InternalException(error="Invalid feedback type provided")
 
 def convert_to_datetime(date:str,format:str):
     try:
         return datetime.strptime(date,format)
-    except ValueError as e:
-        raise ValidationException(message=e.args[0]) 
+    except (ValueError, TypeError) as e:
+        raise InternalException(error=e.args[0])
+
+def remove_bad_persian_letters(strx:str) -> str:
+    bad_reg = re.compile(r"[ؤئًٌٍَِّْ»ة»ءٰٔٓأأإأ\u200f]")
+    s = bad_reg.sub("",strx)
+    s = re.sub(r"[\u200c]"," ",s)
+    return s
+
+def remove_inside_parantheses(strx:str) -> str:
+    reg1 = re.compile(r"\s*\(.*\)")
+    reg2 = re.compile(r"\s*\(.*\(")
+    reg3 = re.compile(r"\s*\).*\)")
+    s = reg1.sub("",strx)
+    s = reg2.sub("",s)
+    s = reg3.sub("",s)
+    return s
+
+def create_dir_name(strx:str):
+    s = strx.lower()
+    s = re.sub(r"[\s\-]","_",s)
+    s = re.sub(r"[\\\/\r\+@^&%$#!]","",s)
+    return s
+    
+def create_en_name(strx:str):
+    s = re.sub(r"[\-\_]"," ",strx)
+    s = re.sub(r"[\\\/\r\+@^&%$#!]","",s)
+    s = re.sub(r"\s{2,}"," ",s)
+    s = s.split(" ")
+    s = " ".join([st.capitalize() for st in s])
+    return s
     
 @dataclass
-class ValidatorField():
+class ModelField():
     field_type: Type
     eval: Dict[str,Callable] = field(default_factory= lambda: {})
     optional: bool = field(default_factory= lambda: False)
     ignore: bool = field(default_factory= lambda: False)
-    converter: Optional[Callable] = field(default_factory= lambda: None)
+    preconverter: Optional[Callable] = field(default_factory= lambda: None)
+    postconverter: Optional[Callable] = field(default_factory= lambda: None)
 
     def __post_init__(self):
-        if self.field_type in [int, float] and self.converter is None:
-            self.converter = lambda x: parse_int_float(x,self.field_type)
+        if self.field_type in [int, float] and self.preconverter is None:
+            self.preconverter = lambda x: parse_int_float(x,self.field_type)
         self.check_type_and_subclass()
             
     def check_type_and_subclass(self):
@@ -141,7 +173,14 @@ class Validators:
 
     @staticmethod
     def fa_text(x):
-        regex = re.compile(r"^[۱-۹آ-ی\s\d]+$")
+        regex = re.compile(r"^[۱-۹آ-ی\s\d\.]+$")
+        if not regex.match(x):
+            return "Text must only contain farsi letters, digits, space and english digits"
+        return None
+
+    @staticmethod
+    def fa_company_name(x):
+        regex = re.compile(r"^[۱-۹آ-ی\s\d\.\-\*,،]+$")
         if not regex.match(x):
             return "Text must only contain farsi letters, digits, space and english digits"
         return None
@@ -151,6 +190,20 @@ class Validators:
         regex = re.compile(r"^[A-Za-z\s\d\-.]+$")
         if not regex.match(x):
             return "Text must only contain english letters, digits, space and dash"
+        return None
+
+    @staticmethod
+    def en_company_name(x):
+        regex = re.compile(r"^[A-Za-z\s\d\-.&!',@]+$")
+        if not regex.match(x):
+            return "Text must only contain english letters, digits, space and dash"
+        return None
+
+    @staticmethod
+    def en_dirname(x):
+        regex = re.compile(r"^[a-z\d\_]+$")
+        if not regex.match(x):
+            return "Text must only contain lowercase, digits and/or underline"
         return None
 
     @staticmethod
@@ -167,13 +220,14 @@ class Validators:
 
     @staticmethod
     def website(x):
-        regex =  re.compile(r"^(www\.)?[a-z\d_]{3,}\.[a-z]{2,6}$")
+        # Up to 3 long subdomains are supported e.g. www.shitless.someone.co.ir
+        regex =  re.compile(r"^(www\.)?[a-z\d_]{3,}(\.[a-z]{2,10}){0,3}\.[a-z]{2,6}$")
         if not regex.match(x):
             return "Invalid website address"
         return None
 
     @staticmethod
-    def date_compare(x_date:datetime,format:str ,date:Optional[Union[str,datetime]] = None, order: Literal['before','after'] = 'before'):
+    def date_compare(x_date:Union[datetime,int,float],format:str ,date:Optional[Union[str,datetime]] = None, order: Literal['before','after'] = 'before'):
         if date is not None:
             if type(date) == str:
                 try:
@@ -187,6 +241,8 @@ class Validators:
         else:
             y_date = datetime.now()
             date = "Now"
+        if type(x_date) in [int,float]:
+            x_date = datetime.fromtimestamp(x_date) # type: ignore
             
         if order == "before" and x_date > y_date:
             return f"Date must be before {date}"
@@ -194,84 +250,132 @@ class Validators:
             return f"Date must be after {date}"
         return None
 
-class BaseParamsValidator:
+class BaseParamsSchema:
 
     inputs: dict
+    error_bag: dict = {}
+    has_errors: Optional[bool] = None
+    sanitized: dict = {}
+    only_optional_errors_exist:bool = True
 
     def __init__(self, **kwargs) -> None:
         self.inputs = kwargs
 
-    def get_fields(self) -> Iterable[Tuple[str, ValidatorField]]:
+    def get_fields(self) -> Iterable[Tuple[str, ModelField]]:
         for key, value in self.__dict__.items():
-            if type(value) == ValidatorField:
+            if type(value) == ModelField:
                 yield key, value
 
     def inputs_check(self):
         if len(self.inputs) < 1:
-            raise ValidationException(bag={}, message="Payload cannot be empty")
+            raise ValidationException(message="Payload cannot be empty")
 
-    def validate(self):
+    def __check_presence(self, name:str, field: ModelField):
+        """Check if required and present"""
+        if name not in self.inputs and not field.optional:
+            raise InternalException(error = {"required":"Missing required param"})
+
+    def __get_or_preconvert(self, name:str, field: ModelField):
+        """Get value and if it has converter, return the converted value. Otherwise, return the original value"""
+        val = self.inputs.get(name)
+        if val is not None and field.preconverter is not None:
+            try:
+                return field.preconverter(val)
+            except InternalException as e:
+                raise InternalException(error={"preconversion":f"{e.error}"})
+        else:
+            return val
+
+
+    @staticmethod
+    def __type_check(value, field:ModelField):
+        """Check the type of the original or converted value"""
+        if type(value) != field.field_type:
+                raise InternalException(error={"type":f"Invalid type. Expected {field.field_type}"})
+        return None
+
+    @staticmethod
+    def __perform_evaluations(value, field:ModelField):
+        """Perform the evaluations that are defined in 'eval' """
+        errors = {}
+        for func_name,func in field.eval.items():
+            try:
+                msg = func(x=value)
+            except Exception as e:
+                msg = e.args[0]
+            if msg is not None:
+                errors[func_name] = msg
+        if len(errors) > 0:
+            raise InternalException(error=errors)
+
+    @staticmethod
+    def __postconvert(value, field: ModelField):
+        if value is not None and field.postconverter is not None:
+            try:
+                return field.postconverter(value)
+            except InternalException as e:
+                raise InternalException(error={"postconversion":f"{e.error}"})
+        return value
+
+    def check(self):
         self.inputs_check()
         error_bag = {}
         sanitized_input = {}
+        only_optional = True
 
-        # noinspection PyBroadException
-        def evaluate(name:str, value: ValidatorField):
-            if name not in self.inputs:
-                if not value.optional:
-                    return ["Missing required param"]
-                return []
- 
-            val = self.inputs[name]
-            converted = None
-
-            if value.converter is not None:
-                try:
-                    converted = value.converter(val)
-                except:
-                    return ["Field conversion error"]
-                if converted is not None:
-                    self.inputs[name] = val = converted
-
-            if type(val) != value.field_type and (converted is None or type(converted) != value.field_type):
-                return [f"Invalid type. Expected {value.field_type}"]
-
-            errors = []
-            for name,func in value.eval.items():
-                msg = func(x=val)
-                if msg:
-                    errors.append(msg)
-            return errors
-
-        for name, value in self.get_fields():
-
-            if value.ignore:
+        for name, field in self.get_fields():
+            if field.ignore:
                 continue
-
-            errs = evaluate(name, value)
-            if len(errs) > 0:
-                error_bag[name] = errs
-            else:
-                if name in self.inputs.keys():
-                    sanitized_input[name] = self.inputs[name]
+            try:
+                self.__check_presence(name,field)
+                value  = self.__get_or_preconvert(name, field)
+                if value is None:
+                    continue
+                self.__type_check(value, field)
+                self.__perform_evaluations(value, field)
+                value = self.__postconvert(value, field)
+                self.__type_check(value,field)
+                if value is None:
+                    continue
+            except InternalException as e:
+                error_bag[name] = e.error
+                if not field.optional:
+                    only_optional = False
+                continue
+            sanitized_input[name] = value
+        
+        
+        self.sanitized = sanitized_input
+        self.only_optional_errors_exist = only_optional
 
         if len(error_bag) > 0:
-            raise ValidationException(bag=error_bag)
-        return sanitized_input
+            self.error_bag = error_bag
+            self.has_errors = True
+        else:
+            self.has_errors = False
+        return self
 
-class Login(BaseParamsValidator):
+    def validate(self):
+        if self.has_errors is None: # if has_errors is None, that would indicate that checking process is not started
+            self.check()
 
-    password: ValidatorField
-    email: ValidatorField
+        if self.has_errors:
+            raise ValidationException(error_bag=self.error_bag)
+        return self.sanitized
+
+class Login(BaseParamsSchema):
+
+    password: ModelField
+    email: ModelField
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.password = ValidatorField(
+        self.password = ModelField(
             field_type = str,
             optional = False,
         )
 
-        self.email = ValidatorField(
+        self.email = ModelField(
             field_type = str,
             optional = False,
             eval = {
@@ -279,23 +383,23 @@ class Login(BaseParamsValidator):
             }
         )
 
-class CreateUser(BaseParamsValidator):
+class CreateUser(BaseParamsSchema):
 
-    name: ValidatorField
-    password: ValidatorField
-    email: ValidatorField
-    user_type: ValidatorField
+    name: ModelField
+    password: ModelField
+    email: ModelField
+    user_type: ModelField
 
     def __init__(self,**kwargs) -> None:
         super().__init__(**kwargs)
-        self.name = ValidatorField(
+        self.name = ModelField(
             field_type=str,
             optional=False,
             eval= {
                 "lower_case": lambda x: None if re.match(r"[a-z\d]+_?[a-z\d]+",x) else "User name must only contain lower case letters, numbers and underline",
                 "bigger": lambda x: "The length of user name must be bigger than 5" if len(x) < 5 else None
             })
-        self.password = ValidatorField(
+        self.password = ModelField(
             field_type = str,
             optional = False,
             eval = {
@@ -305,7 +409,7 @@ class CreateUser(BaseParamsValidator):
             }
         )
 
-        self.email = ValidatorField(
+        self.email = ModelField(
             field_type = str,
             optional = False,
             eval = {
@@ -314,7 +418,7 @@ class CreateUser(BaseParamsValidator):
             }
         )
 
-        self.user_type = ValidatorField(
+        self.user_type = ModelField(
             field_type = str,
             optional = False,
             eval = {
@@ -333,41 +437,42 @@ class EditUser(CreateUser):
         self.user_type.ignore = True
 
 
-class CreateCompany(BaseParamsValidator):
-    fa_name: ValidatorField
-    en_name: ValidatorField
-    email: ValidatorField
-    website: ValidatorField
-    national_id: ValidatorField
-    city_id: ValidatorField
-    phone: ValidatorField
+class CreateCompany(BaseParamsSchema):
+    fa_name: ModelField
+    en_name: ModelField
+    email: ModelField
+    website: ModelField
+    national_id: ModelField
+    city_id: ModelField
+    phone: ModelField
+    brand_name: ModelField
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
-        self.fa_name = ValidatorField(
+        self.fa_name = ModelField(
             field_type =  str,
             optional =  False,
             eval =  {
-                "fa": lambda x: Validators.fa_text(x),
+                "fa": lambda x: Validators.fa_company_name(x),
                 "bigger": lambda x: "The length of company name must be bigger than 4" if len(x) < 4 else None,
-                "smaller": lambda x: "The length of company name can't be bigger than 32" if len(x) > 32 else None,
+                "smaller": lambda x: "The length of company name can't be bigger than 70" if len(x) > 70 else None,
                 "unique": lambda x: Validators.is_unique(x, Company.fa_name, Company),
             }
         )
 
-        self.en_name = ValidatorField(
+        self.en_name = ModelField(
             field_type =  str,
             optional =  False,
             eval =  {
-                "en": lambda x: Validators.en_text(x),
+                "en": lambda x: Validators.en_company_name(x),
                 "bigger": lambda x: "The length of company name must be bigger than 4" if len(x) < 4 else None,
-                "smaller": lambda x: "The length of company name can't be bigger than 32" if len(x) > 32 else None,
+                "smaller": lambda x: "The length of company name can't be bigger than 60" if len(x) > 60 else None,
                 "unique": lambda x: Validators.is_unique(x, Company.en_name, Company),
             }
         )
 
-        self.email = ValidatorField(
+        self.email = ModelField(
             field_type =  str,
             optional =  False,
             eval =  {
@@ -377,7 +482,7 @@ class CreateCompany(BaseParamsValidator):
             }
         )
 
-        self.national_id = ValidatorField(
+        self.national_id = ModelField(
             field_type =  str,
             optional =  False,
             eval =  {
@@ -396,14 +501,14 @@ class CreateCompany(BaseParamsValidator):
         #     }
         # )
 
-        self.city_id = ValidatorField(
+        self.city_id = ModelField(
             field_type =  int,
             optional =  False,
             eval =  {
                 "has_id": lambda x: Validators.sql_model_id(x, City)
             }
         )
-        self.website = ValidatorField(
+        self.website = ModelField(
             field_type =  str,
             optional =  False,
             eval =  {
@@ -413,7 +518,7 @@ class CreateCompany(BaseParamsValidator):
             }
         )
 
-        self.phone = ValidatorField(
+        self.phone = ModelField(
             field_type =  str,
             optional =  False,
             eval =  {
@@ -424,11 +529,22 @@ class CreateCompany(BaseParamsValidator):
             }
         )
 
+        self.brand_name = ModelField(
+            field_type =  str,
+            optional =  True,
+            eval =  {
+                "fa": lambda x: Validators.fa_company_name(x),
+                "bigger": lambda x: "The length of company name must be bigger than 4" if len(x) < 4 else None,
+                "smaller": lambda x: "The length of company name can't be bigger than 10" if len(x) > 10 else None,
+                "unique": lambda x: Validators.is_unique(x, Company.fa_name, Company),
+            }
+        )
+
 class EditCompany(CreateCompany):
-    company_id: ValidatorField
+    company_id: ModelField
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.company_id = ValidatorField(
+        self.company_id = ModelField(
             field_type=int,
             optional= False,
             eval={
@@ -445,13 +561,13 @@ class EditCompany(CreateCompany):
     
     def inputs_check(self):
         if len(self.inputs) < 2 or "company_id" not in self.inputs:
-            raise ValidationException(bag={}, message="Payload must contain the field company_id and at least one other field to edit")
+            raise ValidationException(message="Payload must contain the field company_id and at least one other field to edit")
 
-class GetCompany(BaseParamsValidator):
-    company_id: ValidatorField
+class GetCompany(BaseParamsSchema):
+    company_id: ModelField
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.company_id = ValidatorField(
+        self.company_id = ModelField(
             field_type=int,
             optional= False,
             eval={
@@ -459,17 +575,17 @@ class GetCompany(BaseParamsValidator):
             }
         )
 
-class GetFeedbacks(BaseParamsValidator):
-    company_id: ValidatorField
-    user_id: ValidatorField
-    feedback_type: ValidatorField
-    offset: ValidatorField
-    limit: ValidatorField
+class GetFeedbacks(BaseParamsSchema):
+    company_id: ModelField
+    user_id: ModelField
+    feedback_type: ModelField
+    offset: ModelField
+    limit: ModelField
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
-        self.company_id = ValidatorField(
+        self.company_id = ModelField(
             field_type=int,
             optional= False,
             eval={
@@ -477,7 +593,7 @@ class GetFeedbacks(BaseParamsValidator):
             }
         )
 
-        self.user_id = ValidatorField(
+        self.user_id = ModelField(
             field_type=int,
             optional= True,
             eval={
@@ -486,16 +602,16 @@ class GetFeedbacks(BaseParamsValidator):
             ignore=True
         )
 
-        self.feedback_type = ValidatorField(
+        self.feedback_type = ModelField(
             field_type=FeedbackType,
             optional= True,
             eval={
                 "in": lambda x: Validators.is_in(x,list(FeedbackType.__members__.values()))
             },
-            converter= convert_to_feedback_type
+            preconverter= convert_to_feedback_type
         )
 
-        self.offset  = ValidatorField(
+        self.offset  = ModelField(
             field_type=int,
             optional= True,
             eval={
@@ -503,7 +619,7 @@ class GetFeedbacks(BaseParamsValidator):
             }            
         )
 
-        self.limit = ValidatorField(
+        self.limit = ModelField(
             field_type=int,
             optional= True,
             eval={
@@ -511,20 +627,20 @@ class GetFeedbacks(BaseParamsValidator):
             }            
         )
 
-class RegisterFeedback(BaseParamsValidator):
-    title : ValidatorField
-    body : ValidatorField
-    job_title : ValidatorField
-    score : ValidatorField
-    salary : ValidatorField
-    type : ValidatorField
-    company_id: ValidatorField
-    details : ValidatorField
+class RegisterFeedback(BaseParamsSchema):
+    title : ModelField
+    body : ModelField
+    job_title : ModelField
+    score : ModelField
+    salary : ModelField
+    type : ModelField
+    company_id: ModelField
+    details : ModelField
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
-        self.title = ValidatorField(
+        self.title = ModelField(
             field_type=str,
             optional= False,
             eval={
@@ -532,7 +648,7 @@ class RegisterFeedback(BaseParamsValidator):
                 "smaller": lambda x: "The length of job title can't be bigger than 32" if len(x) > 32 else None,
             }            
         )
-        self.body = ValidatorField(
+        self.body = ModelField(
             field_type=str,
             optional= False,
             eval={
@@ -540,7 +656,7 @@ class RegisterFeedback(BaseParamsValidator):
                 "smaller": lambda x: "The length of feedback can't be bigger than 2000" if len(x) > 2000 else None,
             }                  
         )
-        self.job_title = ValidatorField(
+        self.job_title = ModelField(
             field_type=str,
             optional= False,
             eval={
@@ -548,30 +664,30 @@ class RegisterFeedback(BaseParamsValidator):
                 "smaller": lambda x: "The length of job title can't be bigger than 32" if len(x) > 32 else None,
             }            
         )
-        self.score = ValidatorField(
+        self.score = ModelField(
             field_type =  int,
             optional =  False,
             eval =  {
                 "between": lambda x: "The score must be btween 0 and 10" if x < 0 or x > 10 else None
             }
         )
-        self.salary = ValidatorField(
+        self.salary = ModelField(
             field_type=float,
             optional= False,
             eval={
                 "order": lambda x: "The salary must be btween 1 and 100 million tomans" if x < 1 or x > 100 else None,
             },
-            converter= lambda x: parse_int_float(round(x,2), float)            
+            preconverter= lambda x: parse_int_float(round(x,2), float)            
         )
-        self.type = ValidatorField(
+        self.type = ModelField(
             field_type=FeedbackType,
             optional= False,
             eval={
                 "in": lambda x: Validators.is_in(x,list(FeedbackType.__members__.values()))
             },
-            converter= convert_to_feedback_type            
+            preconverter= convert_to_feedback_type            
         )
-        self.company_id = ValidatorField(
+        self.company_id = ModelField(
             field_type=int,
             optional= False,
             eval={
@@ -579,7 +695,7 @@ class RegisterFeedback(BaseParamsValidator):
             }
         )
 
-        self.details = ValidatorField(
+        self.details = ModelField(
             field_type=dict,
             optional= True, # TODO We later convert this to True
             eval={
@@ -589,8 +705,8 @@ class RegisterFeedback(BaseParamsValidator):
 
 
 class RegisterReview(RegisterFeedback):
-    start_ts : ValidatorField
-    end_ts : ValidatorField
+    start_ts : ModelField
+    end_ts : ModelField
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -599,27 +715,27 @@ class RegisterReview(RegisterFeedback):
         # self.company_id.eval["user_reviewed"] = lambda x: message if user_reviewed(x) is not None else None
         self.type.ignore = True
         date_fmt = "%d-%m-%Y"
-        self.start_ts = ValidatorField(
+        self.start_ts = ModelField(
             field_type=datetime,
             optional= False,
             eval={
                 "before_now": lambda x: Validators.date_compare(x,format= date_fmt, date=None, order='before')
             },
-            converter= lambda x: convert_to_datetime(x, date_fmt)
+            preconverter= lambda x: convert_to_datetime(x, date_fmt)
         )
 
-        self.end_ts = ValidatorField(
+        self.end_ts = ModelField(
             field_type=datetime,
             optional= True, # If false is given, thye are still employed
             eval={
                 "before_now": lambda x: Validators.date_compare(x,format= date_fmt, date=None, order='before'),
                 "after_start": lambda x: Validators.date_compare(x,format= date_fmt, date=self.inputs['start_ts'], order='after')
             },
-            converter= lambda x: convert_to_datetime(x, date_fmt)
+            preconverter= lambda x: convert_to_datetime(x, date_fmt)
         )
 
 class EditReview(RegisterReview):
-    id: ValidatorField
+    id: ModelField
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -632,7 +748,7 @@ class EditReview(RegisterReview):
 
         self.company_id.ignore = True
 
-        self.id = ValidatorField(
+        self.id = ModelField(
             field_type=int,
             optional=False,
             eval= {
@@ -641,12 +757,12 @@ class EditReview(RegisterReview):
         )
     def inputs_check(self):
         if len(self.inputs) < 2 or "id" not in self.inputs:
-            raise ValidationException(bag={}, message="Payload must contain the field id and at least one other field to edit")    
+            raise ValidationException(message="Payload must contain the field id and at least one other field to edit")    
 
 class RegisterInterview(RegisterFeedback):
-    int_ts : ValidatorField
-    expected_salary : ValidatorField
-    result : ValidatorField
+    int_ts : ModelField
+    expected_salary : ModelField
+    result : ModelField
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -662,28 +778,28 @@ class RegisterInterview(RegisterFeedback):
         # self.company_id.eval["user_interviewed"] = lambda x: message if user_reviewed(x) is not None else None
         self.type.ignore = True
         date_fmt = "%d-%m-%Y"
-        self.int_ts = ValidatorField(
+        self.int_ts = ModelField(
             field_type=datetime,
             optional= False,
             eval={
                 "before_now": lambda x: Validators.date_compare(x,format= date_fmt, date=None, order='before')
             },
-            converter= lambda x: convert_to_datetime(x, date_fmt)
+            preconverter= lambda x: convert_to_datetime(x, date_fmt)
         )
 
         self.expected_salary = self.salary # The expected_salary validator is the same as salary
 
-        self.result = ValidatorField(
+        self.result = ModelField(
             field_type=InterviewResult,
             optional= False,
             eval={
                 "in": lambda x: Validators.is_in(x,list(InterviewResult.__members__.values()))
             },
-            converter= convert_to_interview_result   
+            preconverter= convert_to_interview_result   
         )
 
 class EditInterView(RegisterInterview):
-    id: ValidatorField
+    id: ModelField
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -693,7 +809,7 @@ class EditInterView(RegisterInterview):
 
         self.company_id.ignore = True
 
-        self.id = ValidatorField(
+        self.id = ModelField(
             field_type=int,
             optional=False,
             eval= {
@@ -702,4 +818,4 @@ class EditInterView(RegisterInterview):
         )
     def inputs_check(self):
         if len(self.inputs) < 2 or "id" not in self.inputs:
-            raise ValidationException(bag={}, message="Payload must contain the field id and at least one other field to edit")
+            raise ValidationException(message="Payload must contain the field id and at least one other field to edit")

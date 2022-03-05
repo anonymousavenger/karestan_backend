@@ -1,6 +1,10 @@
-from email import message
 from typing import Optional
-from flask import jsonify
+
+class InternalException(BaseException):
+    error = None
+    def __init__(self, error = None) -> None:
+        self.error = error
+        super().__init__(error)
 
 class ResponseException(BaseException):
     code: int
@@ -13,7 +17,7 @@ class ResponseException(BaseException):
         self.message = message
         super().__init__(error)
 
-    def to_dict(self, payload:dict=None) -> dict:
+    def to_dict(self, payload:Optional[dict]=None) -> dict:
         if payload is None:
             payload = {
                 "type": self.error,
@@ -23,23 +27,40 @@ class ResponseException(BaseException):
 
 
 class ValidationException(ResponseException):
-    bag = None
+    error_bag: Optional[dict]
 
-    def __init__(self, bag: dict = {}, message="Please check the 'errors' for the list of validation errors", code=422, error="Validation error"):
+    def __init__(self, error_bag:Optional[dict] = None, message="Please check the 'errors' for the list of validation errors", code=422, error="Validation error"):
         # Call the base class constructor with the parameters it needs
         self.message = message
         self.error = error
-        self.bag = bag
         self.code = code
+        self.error_bag = error_bag
         super().__init__(code=code, message=message, error=error)
 
+    # @property
+    # def schema_instance(self):
+    #     from .validation import BaseParamsSchema
+    #     if self.__sch_i is not None and issubclass(self.__sch_i.__class__,BaseParamsSchema):
+    #         sss: BaseParamsSchema  = self.__sch_i
+    #         return sss
+    #     else:
+    #         return None
 
-    def to_dict(self, payload: dict = None):
+    # @schema_instance.setter
+    # def schema_instance(self, schema_instance):
+    #     from .validation import BaseParamsSchema
+    #     if issubclass(schema_instance.__class__,BaseParamsSchema):
+    #         self.__sch_i = schema_instance
+    #     else:
+    #         raise ValueError
+
+    def to_dict(self, payload: Optional[dict] = None):
         payload = {
                 "type": self.error,
-                "errors": self.bag
+                "errors": self.error_bag
             }
         return super().to_dict(payload)
+
 
 
 class MiddlewareException(ResponseException):

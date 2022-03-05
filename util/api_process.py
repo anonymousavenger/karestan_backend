@@ -6,7 +6,7 @@ from typing import Callable, Literal, Optional, Type
 from functools import wraps
 
 from .exceptions import ResponseException
-from .validation import BaseParamsValidator
+from .validation import BaseParamsSchema
 
 
 
@@ -30,7 +30,7 @@ def modify_access_cookies(response, cookie_state: Literal['set','unset'], body:O
         unset_access_cookies(response[0])
     return response
 
-def validate_and_json_response(validator_cls:Optional[Type[BaseParamsValidator]], 
+def validate_and_json_response(validator_cls:Optional[Type[BaseParamsSchema]], 
 access_cookie:Optional[Literal['set','unset']] = None, get_params: bool = True):
     def decorator(func:Callable) -> Callable:
         @wraps(func) # we need 'wraps' to avoid the error: 'View function mapping is overwriting an existing endpoint function...'
