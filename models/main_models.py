@@ -1,3 +1,4 @@
+import email
 from sqlalchemy import String, Integer, Enum, Column, TIMESTAMP, ForeignKey, Index, Float
 from sqlalchemy.dialects.postgresql import JSONB, BOOLEAN, TEXT
 from sqlalchemy.ext.mutable import MutableDict
@@ -67,24 +68,38 @@ class City(Base, BaseMixin):
     province = relationship(Province, back_populates="cities")
     companies = relationship("Company", back_populates="city")
 
+class Industry(Base, BaseMixin):
+    col_ignore = ["updated_at"]
+
+    en_name = Column(String(80), unique=True, nullable=True)
+    fa_name = Column(String(80), unique=True, nullable=False)
+    en_description = Column(String(200), unique=False, nullable=True)
+    fa_description = Column(String(200), unique=False, nullable=True)
+    info = Column(MutableDict.as_mutable(JSONB), nullable=False, default= {"logo":"default","icon":"fa fa-code"})
+
+    companies = relationship("Company", back_populates="industry")
+
 class Company(Base, BaseMixin):
 
     user_id = Column(Integer, ForeignKey('users.id'), nullable=True, unique=True)
     en_name = Column(String(80), unique=True, nullable=False)
     fa_name = Column(String(80), unique=True, nullable=False)
+    dirname = Column(String(100), unique=True, nullable=False)
     brand_name = Column(String(10), unique=True, nullable=True)
-    national_id = Column(String(11), unique=True, nullable=False) 
-    email = Column(String(80), nullable=False, unique=True)
-    website = Column(String(80), nullable=False, unique=True)
-    phone = Column(String(15), nullable=False, unique=True)
+    national_id = Column(String(11), unique=True, nullable=True) 
+    email = Column(String(80), nullable=True, unique=True)
+    website = Column(String(80), nullable=True, unique=True)
+    phone = Column(String(15), nullable=True, unique=True)
     city_id = Column(Integer, ForeignKey('cities.id'), nullable=False)
+    industry_id = Column(Integer, ForeignKey('industries.id'), nullable=False)
     score = Column(Integer, nullable=True)
-    info = Column(MutableDict.as_mutable(JSONB), nullable=True)
     is_verified = Column(BOOLEAN, nullable=False, default=False)
+    info = Column(MutableDict.as_mutable(JSONB), nullable=True)
 
     user = relationship(User, back_populates="company")
     feedbacks = relationship("Feedback", back_populates="company")
     city = relationship(City, back_populates="companies")
+    industry = relationship(Industry, back_populates="companies")
 
 class Feedback(Base, BaseMixin):
 

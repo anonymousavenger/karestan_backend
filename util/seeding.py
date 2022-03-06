@@ -2,12 +2,14 @@ import json
 from datetime import datetime, timedelta
 from wsgi import FlaskApp
 from argon2 import PasswordHasher
-from random import randint, randrange
+from random import randint, choice
 from factory import Factory, Sequence, LazyAttribute
 from faker import Faker
 
 from .db_operations import add_to_db
-from models.main_models import FeedbackStatus, FeedbackType, Interview, InterviewResult, User, Company, Review, UserType, Province, City
+from models.main_models import FeedbackStatus, FeedbackType, Interview, InterviewResult, User, Company, \
+Review, UserType, Province, City, Industry
+from .validation import create_dir_name
 
 session = FlaskApp.db_session()
 ph = PasswordHasher()
@@ -55,26 +57,26 @@ class CompanyFactory(Factory):
 
     fa_name = LazyAttribute(lambda _: fake_fa.unique.company())
     en_name = LazyAttribute(lambda _: fake_en.unique.company())
+    dirname = LazyAttribute(lambda o: create_dir_name(o.en_name))
     website = LazyAttribute(lambda _: fake_en.unique.domain_name())
     email = LazyAttribute(lambda o: f"contact@{o.website}")
     national_id = Sequence(lambda n: str(10000000000+n))
     phone = Sequence(lambda n: str(11111111+n))
-    city_id = LazyAttribute(lambda _: randint(1,1321))
+    city_id = LazyAttribute(lambda _: randint(1,1320))
+    industry_id = LazyAttribute(lambda _: randint(1,30))
 
-def random_item(data:list):
-    return data[randint(0, len(data)-1)]
 class ReviewFactory(Factory):
 
     class Meta:
         model = Review
 
-    title = LazyAttribute(lambda _: random_item(titles))
-    body = LazyAttribute(lambda _: random_item(bodies))
-    job_title = LazyAttribute(lambda _: random_item(jobs))
+    title = LazyAttribute(lambda _: choice(titles))
+    body = LazyAttribute(lambda _: choice(bodies))
+    job_title = LazyAttribute(lambda _: choice(jobs))
     score = LazyAttribute(lambda _: randint(1,10))
     salary = LazyAttribute(lambda _: round(randint(1000000,9900000)/1000000,2))
     start_ts = LazyAttribute(lambda _: datetime.now() - timedelta(days=randint(0,1000)))
-    status = LazyAttribute(lambda _: random_item(list(FeedbackStatus.__members__.values())))
+    status = LazyAttribute(lambda _: choice(list(FeedbackStatus.__members__.values())))
     end_ts = LazyAttribute(lambda o: o.start_ts + timedelta(days=randint(0,1000)))
     user_id = None
     company_id = None
@@ -85,34 +87,32 @@ class InterviewFactory(Factory):
     class Meta:
         model = Interview
 
-    title = LazyAttribute(lambda _: random_item(titles))
-    body = LazyAttribute(lambda _: random_item(bodies))
-    job_title = LazyAttribute(lambda _: random_item(jobs))
+    title = LazyAttribute(lambda _: choice(titles))
+    body = LazyAttribute(lambda _: choice(bodies))
+    job_title = LazyAttribute(lambda _: choice(jobs))
     score = LazyAttribute(lambda _: randint(1,10))
     salary = LazyAttribute(lambda _: round(randint(1000000,9900000)/1000000,2))
     expected_salary = LazyAttribute(lambda _: round(randint(1000000,9900000)/1000000,2))
     int_ts = LazyAttribute(lambda _: datetime.now() - timedelta(days=randint(0,1000)))
-    status = LazyAttribute(lambda _: random_item(list(FeedbackStatus.__members__.values())))
-    result = LazyAttribute(lambda _: random_item(list(InterviewResult.__members__.values())))
+    status = LazyAttribute(lambda _: choice(list(FeedbackStatus.__members__.values())))
+    result = LazyAttribute(lambda _: choice(list(InterviewResult.__members__.values())))
     user_id = None
     company_id = None
 
-def create_provinces():
-    with open("resources/provinces.json","r") as f:
-        provinces  = json.load(f)
-    models = []
-    for item in provinces:
-        models.append(Province(**item))
-    add_to_db(session=session, models=models)
+def create_constant_tables():
+    mapper = {
+        "provinces": Province,
+        "cities": City,
+        "industries": Industry
+    }
 
-
-def create_cities():
-    with open("resources/cities.json","r") as f:
-        cities  = json.load(f)
-    models = []
-    for item in cities:
-        models.append(City(**item))
-    add_to_db(session=session, models=models)
+    for file_name, model in mapper.items():
+        with open(f"resources/{file_name}.json","r") as f:
+            model_params  = json.load(f)
+        models = []
+        for item in model_params:
+            models.append(model(**item))
+        add_to_db(session=session, models=models)
 
 
 def assign_feedback(type:FeedbackType,user_id:int):
@@ -134,8 +134,7 @@ def assign_feedback(type:FeedbackType,user_id:int):
     
     
 def run():
-    create_provinces()
-    create_cities()
+    create_constant_tables()
     employee =  User(name="jobguy",password=ph.hash("12345678"),type=UserType.employee,email="me@jobguy.com")
     manager = User(name="badman",password=ph.hash("12345678"),type=UserType.manager,email="manager@choscorp.ir", is_verified=True)
     admin = User(name="admin",password=ph.hash("12345678"),type=UserType.admin,email="admin@karestan.ir", is_verified=True)
@@ -151,7 +150,7 @@ def run():
     feedback_models = []
     for i in range(2, number + 3):
         for j in range(400):
-            feedback_type = random_item(list(FeedbackType.__members__.values()))
+            feedback_type = choice(list(FeedbackType.__members__.values()))
             try:
                 feedback_models.append(assign_feedback(feedback_type,i+1))
             except:

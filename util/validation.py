@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 import re
-from typing import Dict, Iterable, Literal, Optional, Tuple, Type, Callable, Any, Union
+from typing import Dict, Iterable, Literal, Optional, Tuple, Type, Callable, Any, Union 
 from sqlalchemy import Column
 
 from .exceptions import InternalException, ValidationException
@@ -89,7 +89,7 @@ class ModelField():
             
     def check_type_and_subclass(self):
         accepted_primitives = [str, int, float, bool, dict, datetime]
-        accepted_classes = [Enum]
+        accepted_classes = [Enum, BaseParamsSchema]
         if not self.__check_type(self.field_type, accepted_primitives) and not self.__check_subclass(self.field_type, accepted_classes):
             raise Exception(f"Field type of {self.field_type} must be one of the following:\
                 {accepted_primitives + accepted_classes}")
@@ -227,9 +227,11 @@ class Validators:
         return None
 
     @staticmethod
-    def date_compare(x_date:Union[datetime,int,float],format:str ,date:Optional[Union[str,datetime]] = None, order: Literal['before','after'] = 'before'):
+    def date_compare(x_date:Union[datetime,int,float],format:Optional[str] = None ,date:Optional[Union[str,datetime]] = None, order: Literal['before','after'] = 'before'):
         if date is not None:
             if type(date) == str:
+                if format is None:
+                    raise Exception("'format' can't be None for a text date")
                 try:
                     y_date:datetime = datetime.strptime(date,format) # type: ignore 
                 except ValueError as e:
@@ -257,9 +259,15 @@ class BaseParamsSchema:
     has_errors: Optional[bool] = None
     sanitized: dict = {}
     only_optional_errors_exist:bool = True
+    children: dict = {} # If we have nested structures, we'll save their validator instances here
+    level:int = 1 # This is used to count how many depth levels we can go
+    MAX_LEVEL = 2 # Maximum depth level
 
     def __init__(self, **kwargs) -> None:
         self.inputs = kwargs
+        self.children = {}
+        self.has_errors = None
+        self.only_optional_errors_exist = True
 
     def get_fields(self) -> Iterable[Tuple[str, ModelField]]:
         for key, value in self.__dict__.items():
@@ -273,7 +281,7 @@ class BaseParamsSchema:
     def __check_presence(self, name:str, field: ModelField):
         """Check if required and present"""
         if name not in self.inputs and not field.optional:
-            raise InternalException(error = {"required":"Missing required param"})
+            raise InternalException(error = {"_required":"Missing required param"})
 
     def __get_or_preconvert(self, name:str, field: ModelField):
         """Get value and if it has converter, return the converted value. Otherwise, return the original value"""
@@ -282,16 +290,31 @@ class BaseParamsSchema:
             try:
                 return field.preconverter(val)
             except InternalException as e:
-                raise InternalException(error={"preconversion":f"{e.error}"})
+                raise InternalException(error={"_preconversion":f"{e.error}"})
         else:
             return val
 
+    def __check_nested(self, name:str, inp:dict, field:ModelField):
+        if not issubclass(field.field_type, BaseParamsSchema):
+            return None
+        if type(inp) != dict:
+            raise InternalException(error="Params supplied for nested must be dict")
+        if self.level > self.MAX_LEVEL:
+            raise InternalException({"_depth":"Maximum depth level reached for nested values"})
+        instance = field.field_type(**inp)
+        instance.level = self.level + 1
+        val_instance = instance.check()
+        self.children[name] = val_instance
+        if val_instance.only_optional_errors_exist:
+            return val_instance.sanitized
+        else:
+            raise InternalException(error=val_instance.error_bag)
 
     @staticmethod
     def __type_check(value, field:ModelField):
         """Check the type of the original or converted value"""
         if type(value) != field.field_type:
-                raise InternalException(error={"type":f"Invalid type. Expected {field.field_type}"})
+                raise InternalException(error={"_type":f"Invalid type. Expected {field.field_type}"})
         return None
 
     @staticmethod
@@ -314,7 +337,7 @@ class BaseParamsSchema:
             try:
                 return field.postconverter(value)
             except InternalException as e:
-                raise InternalException(error={"postconversion":f"{e.error}"})
+                raise InternalException(error={"_postconversion":f"{e.error}"})
         return value
 
     def check(self):
@@ -331,13 +354,18 @@ class BaseParamsSchema:
                 value  = self.__get_or_preconvert(name, field)
                 if value is None:
                     continue
-                self.__type_check(value, field)
-                self.__perform_evaluations(value, field)
-                value = self.__postconvert(value, field)
-                self.__type_check(value,field)
-                if value is None:
-                    continue
+                sanitized_nested = self.__check_nested(name, value, field)
+                if sanitized_nested is None:
+                    self.__type_check(value, field)
+                    self.__perform_evaluations(value, field)
+                    value = self.__postconvert(value, field)
+                    self.__type_check(value,field)
+                    if value is None:
+                        continue
+                else:
+                    value = sanitized_nested
             except InternalException as e:
+                # TODO Nested only_optional_errors must be added. ony optinals must be checked recursively
                 error_bag[name] = e.error
                 if not field.optional:
                     only_optional = False
@@ -379,7 +407,7 @@ class Login(BaseParamsSchema):
             field_type = str,
             optional = False,
             eval = {
-                "format": lambda x: Validators.email(x),
+                "_format": lambda x: Validators.email(x),
             }
         )
 
@@ -396,16 +424,16 @@ class CreateUser(BaseParamsSchema):
             field_type=str,
             optional=False,
             eval= {
-                "lower_case": lambda x: None if re.match(r"[a-z\d]+_?[a-z\d]+",x) else "User name must only contain lower case letters, numbers and underline",
-                "bigger": lambda x: "The length of user name must be bigger than 5" if len(x) < 5 else None
+                "_lower_case": lambda x: None if re.match(r"[a-z\d]+_?[a-z\d]+",x) else "User name must only contain lower case letters, numbers and underline",
+                "_bigger": lambda x: "The length of user name must be bigger than 5" if len(x) < 5 else None
             })
         self.password = ModelField(
             field_type = str,
             optional = False,
             eval = {
-                "strong_pass": lambda x: Validators.strong_pass(x),
-                "bigger": lambda x: "The length of pasword must be bigger than 8" if len(x) < 8 else None,
-                "smaller": lambda x: "The length of pasword can't be bigger than 32" if len(x) > 32 else None
+                "_strong_pass": lambda x: Validators.strong_pass(x),
+                "_bigger": lambda x: "The length of pasword must be bigger than 8" if len(x) < 8 else None,
+                "_smaller": lambda x: "The length of pasword can't be bigger than 32" if len(x) > 32 else None
             }
         )
 
@@ -413,8 +441,8 @@ class CreateUser(BaseParamsSchema):
             field_type = str,
             optional = False,
             eval = {
-                "format": lambda x: Validators.email(x),
-                "unique": lambda x: Validators.is_unique(x, User.email, User),
+                "_format": lambda x: Validators.email(x),
+                "_unique": lambda x: Validators.is_unique(x, User.email, User),
             }
         )
 
@@ -422,7 +450,7 @@ class CreateUser(BaseParamsSchema):
             field_type = str,
             optional = False,
             eval = {
-                "in": lambda x: Validators.is_in(x, [UserType.employee.name, UserType.manager.name]),
+                "_in": lambda x: Validators.is_in(x, [UserType.employee.name, UserType.manager.name]),
             }
         )
 
@@ -433,7 +461,7 @@ class EditUser(CreateUser):
         self.name.optional = True
         self.password.optional = True
         self.email.optional = True
-        self.email.eval["unique"] = lambda x: Validators.is_unique(x, User.email, User, get_current_user().id) # type: ignore
+        self.email.eval["_unique"] = lambda x: Validators.is_unique(x, User.email, User, get_current_user().id) # type: ignore
         self.user_type.ignore = True
 
 
@@ -454,10 +482,10 @@ class CreateCompany(BaseParamsSchema):
             field_type =  str,
             optional =  False,
             eval =  {
-                "fa": lambda x: Validators.fa_company_name(x),
-                "bigger": lambda x: "The length of company name must be bigger than 4" if len(x) < 4 else None,
-                "smaller": lambda x: "The length of company name can't be bigger than 70" if len(x) > 70 else None,
-                "unique": lambda x: Validators.is_unique(x, Company.fa_name, Company),
+                "_fa": lambda x: Validators.fa_company_name(x),
+                "_bigger": lambda x: "The length of company name must be bigger than 4" if len(x) < 4 else None,
+                "_smaller": lambda x: "The length of company name can't be bigger than 70" if len(x) > 70 else None,
+                "_unique": lambda x: Validators.is_unique(x, Company.fa_name, Company),
             }
         )
 
@@ -465,10 +493,10 @@ class CreateCompany(BaseParamsSchema):
             field_type =  str,
             optional =  False,
             eval =  {
-                "en": lambda x: Validators.en_company_name(x),
-                "bigger": lambda x: "The length of company name must be bigger than 4" if len(x) < 4 else None,
-                "smaller": lambda x: "The length of company name can't be bigger than 60" if len(x) > 60 else None,
-                "unique": lambda x: Validators.is_unique(x, Company.en_name, Company),
+                "_en": lambda x: Validators.en_company_name(x),
+                "_bigger": lambda x: "The length of company name must be bigger than 4" if len(x) < 4 else None,
+                "_smaller": lambda x: "The length of company name can't be bigger than 60" if len(x) > 60 else None,
+                "_unique": lambda x: Validators.is_unique(x, Company.en_name, Company),
             }
         )
 
@@ -476,9 +504,9 @@ class CreateCompany(BaseParamsSchema):
             field_type =  str,
             optional =  False,
             eval =  {
-                "format": lambda x: Validators.email(x),
-                "unique": lambda x: Validators.is_unique(x, Company.email, Company),
-                "length": lambda x: "Email length can't be more than 60 chars" if len(x) > 60 else None
+                "_format": lambda x: Validators.email(x),
+                "_unique": lambda x: Validators.is_unique(x, Company.email, Company),
+                "_length": lambda x: "Email length can't be more than 60 chars" if len(x) > 60 else None
             }
         )
 
@@ -486,9 +514,9 @@ class CreateCompany(BaseParamsSchema):
             field_type =  str,
             optional =  False,
             eval =  {
-                "is_numeric": lambda x: Validators.int_text(x),
-                "length": lambda x: Validators.digits_length(x, 11),
-                "unique": lambda x: Validators.is_unique(x, Company.national_id, Company)
+                "_is_numeric": lambda x: Validators.int_text(x),
+                "_length": lambda x: Validators.digits_length(x, 11),
+                "_unique": lambda x: Validators.is_unique(x, Company.national_id, Company)
             }
         )
 
@@ -496,8 +524,8 @@ class CreateCompany(BaseParamsSchema):
         #     field_type =  int,
         #     optional =  False,
         #     eval =  {
-        #         "length": lambda x: Validators.digits_length(x, 1),
-        #         "between": lambda x: "The score must be btween 0 and 10" if x < 0 or x > 10 else None
+        #         "_length": lambda x: Validators.digits_length(x, 1),
+        #         "_between": lambda x: "The score must be btween 0 and 10" if x < 0 or x > 10 else None
         #     }
         # )
 
@@ -505,16 +533,16 @@ class CreateCompany(BaseParamsSchema):
             field_type =  int,
             optional =  False,
             eval =  {
-                "has_id": lambda x: Validators.sql_model_id(x, City)
+                "_has_id": lambda x: Validators.sql_model_id(x, City)
             }
         )
         self.website = ModelField(
             field_type =  str,
             optional =  False,
             eval =  {
-                "format": lambda x: Validators.website(x),
-                "unique": lambda x: Validators.is_unique(x, Company.website, Company),
-                "length": lambda x: "Website length can't be more than 60 chars" if len(x) > 60 else None
+                "_format": lambda x: Validators.website(x),
+                "_unique": lambda x: Validators.is_unique(x, Company.website, Company),
+                "_length": lambda x: "Website length can't be more than 60 chars" if len(x) > 60 else None
             }
         )
 
@@ -522,10 +550,10 @@ class CreateCompany(BaseParamsSchema):
             field_type =  str,
             optional =  False,
             eval =  {
-                "format": lambda x: Validators.int_text(x),
-                "unique": lambda x: Validators.is_unique(x, Company.phone, Company),
-                "length": lambda x: "Phone length can't be more than 15 chars" if len(x) > 15 else None,
-                "no_zero": lambda x: "Phone number must not start with zero" if x[0] == '0' else None
+                "_format": lambda x: Validators.int_text(x),
+                "_unique": lambda x: Validators.is_unique(x, Company.phone, Company),
+                "_length": lambda x: "Phone length can't be more than 15 chars" if len(x) > 15 else None,
+                "_no_zero": lambda x: "Phone number must not start with zero" if x[0] == '0' else None
             }
         )
 
@@ -533,10 +561,10 @@ class CreateCompany(BaseParamsSchema):
             field_type =  str,
             optional =  True,
             eval =  {
-                "fa": lambda x: Validators.fa_company_name(x),
-                "bigger": lambda x: "The length of company name must be bigger than 4" if len(x) < 4 else None,
-                "smaller": lambda x: "The length of company name can't be bigger than 10" if len(x) > 10 else None,
-                "unique": lambda x: Validators.is_unique(x, Company.fa_name, Company),
+                "_fa": lambda x: Validators.fa_company_name(x),
+                "_bigger": lambda x: "The length of company name must be bigger than 4" if len(x) < 4 else None,
+                "_smaller": lambda x: "The length of company name can't be bigger than 10" if len(x) > 10 else None,
+                "_unique": lambda x: Validators.is_unique(x, Company.fa_name, Company),
             }
         )
 
@@ -548,7 +576,7 @@ class EditCompany(CreateCompany):
             field_type=int,
             optional= False,
             eval={
-                "has_id": lambda x: Validators.sql_model_id(x, Company)
+                "_has_id": lambda x: Validators.sql_model_id(x, Company)
             }
         )
         self.city_id.optional = True
@@ -571,7 +599,7 @@ class GetCompany(BaseParamsSchema):
             field_type=int,
             optional= False,
             eval={
-                "has_id": lambda x: Validators.sql_model_id(x, Company)
+                "_has_id": lambda x: Validators.sql_model_id(x, Company)
             }
         )
 
@@ -589,7 +617,7 @@ class GetFeedbacks(BaseParamsSchema):
             field_type=int,
             optional= False,
             eval={
-                "has_id": lambda x: Validators.sql_model_id(x, Company)
+                "_has_id": lambda x: Validators.sql_model_id(x, Company)
             }
         )
 
@@ -597,7 +625,7 @@ class GetFeedbacks(BaseParamsSchema):
             field_type=int,
             optional= True,
             eval={
-                "has_id": lambda x: Validators.sql_model_id(x, User)
+                "_has_id": lambda x: Validators.sql_model_id(x, User)
             },
             ignore=True
         )
@@ -606,7 +634,7 @@ class GetFeedbacks(BaseParamsSchema):
             field_type=FeedbackType,
             optional= True,
             eval={
-                "in": lambda x: Validators.is_in(x,list(FeedbackType.__members__.values()))
+                "_in": lambda x: Validators.is_in(x,list(FeedbackType.__members__.values()))
             },
             preconverter= convert_to_feedback_type
         )
@@ -615,7 +643,7 @@ class GetFeedbacks(BaseParamsSchema):
             field_type=int,
             optional= True,
             eval={
-                "bigger": lambda x: "The offset value must be bigger than one" if x < 1 else None
+                "_bigger": lambda x: "The offset value must be bigger than one" if x < 1 else None
             }            
         )
 
@@ -623,7 +651,7 @@ class GetFeedbacks(BaseParamsSchema):
             field_type=int,
             optional= True,
             eval={
-                "bigger": lambda x: "The limit value must be bigger than zero" if x < 0 else None
+                "_bigger": lambda x: "The limit value must be bigger than zero" if x < 0 else None
             }            
         )
 
@@ -644,38 +672,38 @@ class RegisterFeedback(BaseParamsSchema):
             field_type=str,
             optional= False,
             eval={
-                "bigger": lambda x: "The length of job title must be bigger than 4" if len(x) < 4 else None,
-                "smaller": lambda x: "The length of job title can't be bigger than 32" if len(x) > 32 else None,
+                "_bigger": lambda x: "The length of job title must be bigger than 4" if len(x) < 4 else None,
+                "_smaller": lambda x: "The length of job title can't be bigger than 32" if len(x) > 32 else None,
             }            
         )
         self.body = ModelField(
             field_type=str,
             optional= False,
             eval={
-                "bigger": lambda x: "The length of feedback must be bigger than 20" if len(x) < 20 else None,
-                "smaller": lambda x: "The length of feedback can't be bigger than 2000" if len(x) > 2000 else None,
+                "_bigger": lambda x: "The length of feedback must be bigger than 20" if len(x) < 20 else None,
+                "_smaller": lambda x: "The length of feedback can't be bigger than 2000" if len(x) > 2000 else None,
             }                  
         )
         self.job_title = ModelField(
             field_type=str,
             optional= False,
             eval={
-                "bigger": lambda x: "The length of job title must be bigger than 4" if len(x) < 4 else None,
-                "smaller": lambda x: "The length of job title can't be bigger than 32" if len(x) > 32 else None,
+                "_bigger": lambda x: "The length of job title must be bigger than 4" if len(x) < 4 else None,
+                "_smaller": lambda x: "The length of job title can't be bigger than 32" if len(x) > 32 else None,
             }            
         )
         self.score = ModelField(
             field_type =  int,
             optional =  False,
             eval =  {
-                "between": lambda x: "The score must be btween 0 and 10" if x < 0 or x > 10 else None
+                "_between": lambda x: "The score must be btween 0 and 10" if x < 0 or x > 10 else None
             }
         )
         self.salary = ModelField(
             field_type=float,
             optional= False,
             eval={
-                "order": lambda x: "The salary must be btween 1 and 100 million tomans" if x < 1 or x > 100 else None,
+                "_order": lambda x: "The salary must be btween 1 and 100 million tomans" if x < 1 or x > 100 else None,
             },
             preconverter= lambda x: parse_int_float(round(x,2), float)            
         )
@@ -683,7 +711,7 @@ class RegisterFeedback(BaseParamsSchema):
             field_type=FeedbackType,
             optional= False,
             eval={
-                "in": lambda x: Validators.is_in(x,list(FeedbackType.__members__.values()))
+                "_in": lambda x: Validators.is_in(x,list(FeedbackType.__members__.values()))
             },
             preconverter= convert_to_feedback_type            
         )
@@ -691,7 +719,7 @@ class RegisterFeedback(BaseParamsSchema):
             field_type=int,
             optional= False,
             eval={
-                "has_id": lambda x: Validators.sql_model_id(x, Company)
+                "_has_id": lambda x: Validators.sql_model_id(x, Company)
             }
         )
 
@@ -699,7 +727,7 @@ class RegisterFeedback(BaseParamsSchema):
             field_type=dict,
             optional= True, # TODO We later convert this to True
             eval={
-                "keys_in": lambda x: Validators.is_in(x.items().keys(),['some_key'])
+                "_keys_in": lambda x: Validators.is_in(x.items().keys(),['some_key'])
             }
         )
 
@@ -712,14 +740,14 @@ class RegisterReview(RegisterFeedback):
         super().__init__(**kwargs)
         # message = "User has already reviewed this company"
         # user_reviewed = lambda x: Validators.is_unique(x, main_column=Review.company_id, model=Review, filters= {Review.user_id: self.inputs['user_id']})
-        # self.company_id.eval["user_reviewed"] = lambda x: message if user_reviewed(x) is not None else None
+        # self.company_id.eval["_user_reviewed"] = lambda x: message if user_reviewed(x) is not None else None
         self.type.ignore = True
         date_fmt = "%d-%m-%Y"
         self.start_ts = ModelField(
             field_type=datetime,
             optional= False,
             eval={
-                "before_now": lambda x: Validators.date_compare(x,format= date_fmt, date=None, order='before')
+                "_before_now": lambda x: Validators.date_compare(x,format= date_fmt, date=None, order='before')
             },
             preconverter= lambda x: convert_to_datetime(x, date_fmt)
         )
@@ -728,8 +756,8 @@ class RegisterReview(RegisterFeedback):
             field_type=datetime,
             optional= True, # If false is given, thye are still employed
             eval={
-                "before_now": lambda x: Validators.date_compare(x,format= date_fmt, date=None, order='before'),
-                "after_start": lambda x: Validators.date_compare(x,format= date_fmt, date=self.inputs['start_ts'], order='after')
+                "_before_now": lambda x: Validators.date_compare(x,format= date_fmt, date=None, order='before'),
+                "_after_start": lambda x: Validators.date_compare(x,format= date_fmt, date=self.inputs['start_ts'], order='after')
             },
             preconverter= lambda x: convert_to_datetime(x, date_fmt)
         )
@@ -744,7 +772,7 @@ class EditReview(RegisterReview):
             attr.optional = True
 
         if "start_ts" not in self.inputs and "end_ts" in self.inputs:
-            del self.end_ts.eval["after_start"]
+            del self.end_ts.eval["_after_start"]
 
         self.company_id.ignore = True
 
@@ -752,7 +780,7 @@ class EditReview(RegisterReview):
             field_type=int,
             optional=False,
             eval= {
-                "has_id": lambda x: Validators.sql_model_id(x, Review)
+                "_has_id": lambda x: Validators.sql_model_id(x, Review)
             }
         )
     def inputs_check(self):
@@ -775,14 +803,14 @@ class RegisterInterview(RegisterFeedback):
 
         # message = "User has already registered an interview for this company"
         # user_reviewed = lambda x: Validators.is_unique(x, main_column=Interview.company_id, model=Interview, filters= {Interview.user_id: self.inputs['user_id']})
-        # self.company_id.eval["user_interviewed"] = lambda x: message if user_reviewed(x) is not None else None
+        # self.company_id.eval["_user_interviewed"] = lambda x: message if user_reviewed(x) is not None else None
         self.type.ignore = True
         date_fmt = "%d-%m-%Y"
         self.int_ts = ModelField(
             field_type=datetime,
             optional= False,
             eval={
-                "before_now": lambda x: Validators.date_compare(x,format= date_fmt, date=None, order='before')
+                "_before_now": lambda x: Validators.date_compare(x,format= date_fmt, date=None, order='before')
             },
             preconverter= lambda x: convert_to_datetime(x, date_fmt)
         )
@@ -793,7 +821,7 @@ class RegisterInterview(RegisterFeedback):
             field_type=InterviewResult,
             optional= False,
             eval={
-                "in": lambda x: Validators.is_in(x,list(InterviewResult.__members__.values()))
+                "_in": lambda x: Validators.is_in(x,list(InterviewResult.__members__.values()))
             },
             preconverter= convert_to_interview_result   
         )
@@ -813,7 +841,7 @@ class EditInterView(RegisterInterview):
             field_type=int,
             optional=False,
             eval= {
-                "has_id": lambda x: Validators.sql_model_id(x, Interview)
+                "_has_id": lambda x: Validators.sql_model_id(x, Interview)
             }
         )
     def inputs_check(self):

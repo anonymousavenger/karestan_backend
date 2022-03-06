@@ -3,11 +3,23 @@ from models.main_models import Company, Feedback, FeedbackType, Interview, Revie
 from copy import copy
 from sqlalchemy.orm import Query, with_polymorphic
 from sqlalchemy import desc
+from random import randint
 
 from .auth import db_session
 from util.db_operations import add_to_db, del_from_db, safe_commit
+from util.validation import create_dir_name
 
 q = db_session.query(Company)
+
+def create_unqiue_dirname(en_name):
+    """Since we may later edit company's en_name, we need to make sure that dir name is always unique"""
+    alt_dir_name = dir_name = create_dir_name(en_name)
+    c = q.filter(Company.dirname == dir_name).count()
+    while c > 1:
+        alt_dir_name = dir_name + "_" + str(randint(0,10000))
+        c = q.filter(Company.dirname == alt_dir_name).count()
+    return alt_dir_name
+
 
 def query_companies(**kwargs) -> Query:
     qe = copy(q)
@@ -23,10 +35,11 @@ def get_company(company_id:int) -> Company:
         raise ValueError
 
 
-def create_company(fa_name:str, en_name:str, email:str, website:str, national_id:str, phone: str, 
+def create_company(fa_name:str, en_name:str, email:str, website:str, national_id:str, phone: str, \
 city_id: int, is_verified:bool = False, info:dict=None):
+    dirname = create_unqiue_dirname(en_name)
     company = Company(fa_name=fa_name, en_name=en_name, email=email,website=website, national_id=national_id, phone=phone,
-    city_id=city_id, is_verified=is_verified, info=info)
+    city_id=city_id, dirname=dirname, is_verified=is_verified, info=info)
     add_to_db(session=db_session,models=company)
     return company.to_dict()
 
